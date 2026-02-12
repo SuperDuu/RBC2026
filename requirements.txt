@@ -1,0 +1,6 @@
+#Python 3.12
+numpy==2.4.2
+opencv_python==4.13.0.92
+pyserial==3.5
+torch==2.7.1+cu118
+ultralytics==8.4.12

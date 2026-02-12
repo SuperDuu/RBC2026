@@ -1,0 +1,50 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <world name="robocon_2026">
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics" />
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands" />
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster" />
+
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Sun</uri>
+    </include>
+
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Ground Plane</uri>
+    </include>
+
+    <model name="san_thi_dau">
+      <static>false</static>
+      <pose>0 0 0.2 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>1000</mass>
+          <inertia>
+            <ixx>1666.67</ixx><ixy>0</ixy><ixz>0</ixz>
+            <iyy>1666.67</iyy><iyz>0</iyz>
+            <izz>3333.33</izz>
+          </inertia>
+        </inertial>
+        <visual name="visual">
+          <geometry>
+            <mesh>
+              <uri>file:///home/du/Desktop/RBC2026/cad/game_field/game_field.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <mesh>
+              <uri>file:///home/du/Desktop/RBC2026/cad/game_field/game_field.dae</uri>
+            </mesh>
+          </geometry>
+        </collision>
+      </link>
+    </model>
+  </world>
+</sdf>

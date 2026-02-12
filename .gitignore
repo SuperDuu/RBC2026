@@ -1,0 +1,10 @@
+venv/
+**/datasets/
+
+**/*.pt
+**/*.bin
+
+.vscode/
+__pycache__/
+*.pyc
+.DS_Store
