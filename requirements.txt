@@ -1,6 +1,13 @@
-#Python 3.12
+#python3.12
+albumentations==2.0.8
+matplotlib==3.10.8
 numpy==2.4.2
 opencv_python==4.13.0.92
+openvino==2024.6.0
+openvino_dev==2024.6.0
+pandas==3.0.0
 pyserial==3.5
+scikit_learn==1.8.0
+tensorflow==2.16.1
 torch==2.7.1+cu118
 ultralytics==8.4.12
