@@ -80,14 +80,13 @@ def run_main():
     
     try:
         while not cam.stopped:
-            frame_raw = cam.read()
-            if frame_raw is None: continue
+            frame = cam.read()
+            if frame is None: continue
             
-            h_f, w_f = frame_raw.shape[:2]
-            display_frame = frame_raw.copy()
+            h_f, w_f = frame.shape[:2]
             screen_center_x = w_f // 2
 
-            cached_boxes = vision.predict(frame_raw, conf_threshold=0.4)
+            cached_boxes = vision.predict(frame, conf_threshold=0.4)
             
             target_point = None
             best_conf = 0
@@ -95,7 +94,7 @@ def run_main():
 
             for box in cached_boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
-                roi = frame_raw[max(0,y1):min(h_f,y2), max(0,x1):min(w_f,x2)]
+                roi = frame[max(0,y1):min(h_f,y2), max(0,x1):min(w_f,x2)]
                 
                 input_data = preprocess_realtime(roi)
                 if input_data is None: continue
@@ -114,8 +113,8 @@ def run_main():
                 elif "real" in name: color, t_type = (0, 255, 0), "REAL"
                 else: color, t_type = (0, 0, 255), "FAKE"
 
-                cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(display_frame, f"{label} {conf:.2f}", (x1, y1-10), 0, 0.5, color, 2)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(frame, f"{label} {conf:.2f}", (x1, y1-10), 0, 0.5, color, 2)
 
                 if t_type in ["R1", "REAL"] and conf > best_conf:
                     best_conf = conf
@@ -124,17 +123,21 @@ def run_main():
 
             if target_point:
                 tx, ty = vision.update_kalman(target_point[0], target_point[1])
-                uart.send_error(tx - screen_center_x)
-                cv2.circle(display_frame, (tx, ty), 8, (0, 255, 255), -1)
+                error_x = tx - screen_center_x
+                uart.send_error(error_x) 
+                
+                cv2.line(frame, (screen_center_x, h_f), (tx, ty), (255, 255, 0), 2)
+                cv2.circle(frame, (tx, ty), 8, (0, 255, 255), -1)
+                cv2.putText(frame, f"ERR: {error_x}", (tx + 15, ty), 0, 0.6, (0, 255, 255), 2)
             else:
                 uart.send_error(0)
 
             now = time.time()
             fps = 1 / (now - prev_time)
             prev_time = now
-            cv2.putText(display_frame, f"FPS: {fps:.1f} | {current_label}", (10, 30), 0, 0.7, (0, 255, 0), 2)
+            cv2.putText(frame, f"FPS: {fps:.1f} | {current_label}", (10, 30), 0, 0.7, (0, 255, 0), 2)
             
-            cv2.imshow("RBC2026_V2.3_REAL", display_frame)
+            cv2.imshow("RBC2026", frame)
             if cv2.waitKey(1) == ord('q'): break
     finally:
         cam.stop(); uart.stop(); cv2.destroyAllWindows()

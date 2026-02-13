@@ -66,7 +66,7 @@ def main_process(frame):
             label = LABELS_CNN.get(idx, "UNKNOWN")
             conf = res[0][idx]
             
-            if conf > 0.5:
+            if conf > 0.4:
                 color, t_type = get_color_logic(label)
                 cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
                 cv2.putText(display_frame, f"{label} {conf:.2f}", (x1, y1-10), 
@@ -79,7 +79,7 @@ def main_process(frame):
     return display_frame
 
 if __name__ == "__main__":
-    IMAGE_PATH = str(BASE_DIR / "datasets" / "user_test" / "img_test_user3.jpg")
+    IMAGE_PATH = str(BASE_DIR / "datasets" / "user_test" / "img_test_user8.jpg")
     img = cv2.imread(IMAGE_PATH)
     if img is not None:
         result = main_process(img)
