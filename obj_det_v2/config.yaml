@@ -1,0 +1,63 @@
+# Optimized Configuration for Better Performance - INT8 Version
+# Updated: 2026-02-17
+
+# Paths configuration
+paths:
+  base_dir: "obj_det_v2"
+  models:
+    yolo_xml: "models/best_openvino_model_int8/best_int8.xml"
+    cnn_xml: "models/openvino_cnn_v2_3/classifier_v2_3.xml"
+    labels_json: "models/labels_v2.3.json"
+
+# Hardware configuration
+hardware:
+  camera:
+    device_id: 0
+    buffer_size: 1
+  uart:
+    port: "/dev/ttyUSB0"
+    baudrate: 115200
+    frequency_hz: 50
+
+# Model configuration - OPTIMIZED FOR INT8
+models:
+  yolo:
+    device: "CPU"  
+    class_id: 0
+    input_size: 512  
+    conf_threshold: 0.6
+    nms_threshold: 0.35
+  cnn:
+    device: "CPU"
+    input_size: 64
+    conf_threshold: 0.5
+    background_value: 128
+
+# Detection and tracking configuration
+detection:
+  min_confidence: 0.4
+  label_smoothing:
+    window_size: 7
+    grid_size: 40
+  
+# Classification configuration
+classification:
+  target_types: ["R1", "REAL"]
+  colors:
+    R1: [255, 255, 0]
+    REAL: [0, 255, 0]
+    FAKE: [0, 0, 255]
+
+# Kalman filter configuration
+kalman:
+  state_size: 4
+  measurement_size: 2
+  process_noise: 0.03
+
+# Display configuration
+display:
+  window_name: "RBC2026"
+  show_fps: true
+  show_error: true
+  font_scale: 0.7
+  line_thickness: 2

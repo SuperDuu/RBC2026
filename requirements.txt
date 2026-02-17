@@ -1,12 +1,13 @@
 #python3.12
 albumentations==2.0.8
 matplotlib==3.10.8
+nncf==2.14.0
 numpy==2.4.2
 opencv_python==4.13.0.92
-openvino==2024.6.0
-openvino_dev==2024.6.0
+openvino==2024.5.0
 pandas==3.0.0
 pyserial==3.5
+PyYAML==6.0.3
 scikit_learn==1.8.0
 tensorflow==2.16.1
 torch==2.7.1+cu118
