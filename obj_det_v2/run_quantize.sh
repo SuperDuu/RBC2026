@@ -1,7 +1,7 @@
 #!/bin/bash
 # Script để quantize YOLO sang INT8
 
-cd "$(dirname "$0")"  # Chuyển về thư mục chứa script
+cd "$(dirname "$0")"  
 
 echo "Current directory: $(pwd)"
 echo "Running quantization with NNCF..."

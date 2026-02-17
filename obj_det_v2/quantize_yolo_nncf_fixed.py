@@ -5,7 +5,6 @@ import cv2
 from pathlib import Path
 import openvino as ov
 
-# Kiểm tra NNCF sau khi bạn đã cài lại bản 2.14.0
 try:
     import nncf
     from nncf import QuantizationPreset
@@ -15,7 +14,6 @@ except ImportError:
 
 def create_calibration_dataset(dataset_path: str, input_size: int, max_samples: int):
     dataset_dir = Path(dataset_path)
-    # Hỗ trợ cả file lẻ và thư mục
     image_paths = []
     extensions = ['*.jpg', '*.jpeg', '*.png', '*.bmp']
     for ext in extensions:
@@ -33,7 +31,6 @@ def create_calibration_dataset(dataset_path: str, input_size: int, max_samples: 
         img = cv2.imread(str(img_path))
         if img is None: continue
         
-        # Tiền xử lý Letterbox chuẩn YOLO
         h, w = img.shape[:2]
         r = input_size / max(h, w)
         nh, nw = int(h * r), int(w * r)
@@ -60,27 +57,21 @@ def main():
     parser.add_argument("--max-samples", type=int, default=300, help="Max samples for calibration")
     args = parser.parse_args()
 
-    # 1. Khởi tạo Core và đọc model
     core = ov.Core()
     print(f"📦 Đang đọc model: {args.model}")
     model = core.read_model(args.model)
     
-    # 2. Tạo dữ liệu Calibration
     try:
         calib_list = create_calibration_dataset(args.dataset, args.input_size, args.max_samples)
     except Exception as e:
         print(e)
         return
 
-    # 3. Tạo NNCF Dataset
-    # Lưu ý: Nếu model có nhiều input, cần truyền dictionary. YOLO thường chỉ có 1 input.
     nncf_dataset = nncf.Dataset(calib_list)
 
     print(f"🚀 Bắt đầu quá trình nén INT8 (Subset size: {len(calib_list)})...")
     
-    # 4. Thực hiện Quantization
     try:
-        # Sử dụng PERFORMANCE để tối ưu FPS cho Robot Humanoid
         quantized_model = nncf.quantize(
             model, 
             nncf_dataset,
@@ -88,7 +79,6 @@ def main():
             subset_size=len(calib_list)
         )
 
-        # 5. Lưu kết quả (OpenVINO 2024+ dùng serialize hoặc save_model)
         out_xml = Path(args.output)
         out_xml.parent.mkdir(parents=True, exist_ok=True)
         ov.save_model(quantized_model, str(out_xml), compress_to_fp16=False)
