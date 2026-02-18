@@ -289,20 +289,15 @@ class RoboconSystem:
                 cv2.putText(frame, f"AVG FPS: {avg_fps:.1f} | {self.latest_label}", (10, 30), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 
-                # cv2.imshow(self.config.get("display.window_name", "RBC2026"), frame)
                 self.frame_idx += 1
                 if not headless:
                     cv2.imshow("RBC2026", frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'): break
                 else:
-                    # Chế độ không màn hình vẫn cần waitKey nhỏ để giữ luồng opencv
-                    # hoặc bỏ hẳn nếu dùng CameraStream đa luồng
                     if cv2.waitKey(1) & 0xFF == ord('q'): break 
                     
-                    # In log tóm tắt ra Terminal mỗi 1 giây để theo dõi
                     if self.frame_idx % 40 == 0:
                         self.logger.info(f"Running: FPS={avg_fps:.1f}, Target={self.latest_label}")
-                # if cv2.waitKey(1) & 0xFF == ord('q'): break
         finally:
             self.cleanup()
 
