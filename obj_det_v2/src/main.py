@@ -244,7 +244,7 @@ class RoboconSystem:
         """Main loop tích hợp Skip-Frame cho cả YOLO và CNN."""
         self.logger.info("Starting optimized loop...")
         self.camera.start()
-        target_fps = 45
+        target_fps = 100
         frame_time_limit = 1.0 / target_fps
         prev_time = time.time()
         avg_fps = 0.0
