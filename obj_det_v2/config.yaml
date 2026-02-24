@@ -22,7 +22,7 @@ hardware:
 # Model configuration - OPTIMIZED FOR INT8
 models:
   yolo:
-    device: "CPU"  
+    device: "GPU"  
     class_id: 0
     input_size: 512  
     conf_threshold: 0.6
@@ -30,7 +30,7 @@ models:
   cnn:
     device: "CPU"
     input_size: 64
-    conf_threshold: 0.5
+    conf_threshold: 0.7
     background_value: 128
 
 # Detection and tracking configuration

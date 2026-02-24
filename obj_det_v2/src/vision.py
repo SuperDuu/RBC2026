@@ -270,27 +270,46 @@ class RobotVision:
             self.logger.error(f"Error during prediction: {e}")
             raise RuntimeError(f"Prediction failed: {e}") from e
     
-    def update_kalman(self, x: float, y: float) -> Tuple[int, int]:
+    # def update_kalman(self, x: float, y: float) -> Tuple[int, int]:
+    #     """
+    #     Update Kalman filter with new measurement and return predicted position.
+        
+    #     Args:
+    #         x: Measured x coordinate
+    #         y: Measured y coordinate
+        
+    #     Returns:
+    #         Tuple of (predicted_x, predicted_y) as integers
+    #     """
+    #     try:
+    #         measured = np.array([[np.float32(x)], [np.float32(y)]])
+    #         self.kalman.correct(measured)
+    #         pred = self.kalman.predict()
+            
+    #         # Extract predicted position (first 2 elements of state vector)
+    #         px, py = pred.flatten()[:2]
+    #         return int(px), int(py)
+        
+    #     except Exception as e:
+    #         self.logger.error(f"Error updating Kalman filter: {e}")
+    #         # Return measured values if Kalman fails
+    #         return int(x), int(y)
+    def update_kalman(self, x: Optional[float] = None, y: Optional[float] = None) -> Tuple[int, int]:
         """
-        Update Kalman filter with new measurement and return predicted position.
-        
-        Args:
-            x: Measured x coordinate
-            y: Measured y coordinate
-        
-        Returns:
-            Tuple of (predicted_x, predicted_y) as integers
+        Bản nâng cấp: Tách biệt Predict và Correct để trị dứt điểm lỗi nháy Box.
         """
         try:
-            measured = np.array([[np.float32(x)], [np.float32(y)]])
-            self.kalman.correct(measured)
-            pred = self.kalman.predict()
+            if x is not None and y is not None:
+                # PHA CORRECT: Chỉ chạy khi YOLO có kết quả thực
+                measured = np.array([[np.float32(x)], [np.float32(y)]])
+                self.kalman.correct(measured)
             
-            # Extract predicted position (first 2 elements of state vector)
+            # PHA PREDICT: Luôn chạy ở mọi frame để giữ quỹ đạo mượt
+            pred = self.kalman.predict()
             px, py = pred.flatten()[:2]
+            
             return int(px), int(py)
         
         except Exception as e:
             self.logger.error(f"Error updating Kalman filter: {e}")
-            # Return measured values if Kalman fails
-            return int(x), int(y)
+            return int(x) if x else 0, int(y) if y else 0
