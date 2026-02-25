@@ -30,11 +30,12 @@ models:
   cnn:
     device: "CPU"
     input_size: 64
-    conf_threshold: 0.7
+    conf_threshold: 0.5
     background_value: 128
 
 # Detection and tracking configuration
 detection:
+  max_loss_frames: 5
   min_confidence: 0.4
   label_smoothing:
     window_size: 7
@@ -42,7 +43,7 @@ detection:
   
 # Classification configuration
 classification:
-  target_types: ["R1", "REAL"]
+  target_types: ["REAL"]
   colors:
     R1: [255, 255, 0]
     REAL: [0, 255, 0]
@@ -52,7 +53,7 @@ classification:
 kalman:
   state_size: 4
   measurement_size: 2
-  process_noise: 0.03
+  process_noise: 0.01
 
 # Display configuration
 display:
@@ -61,4 +62,4 @@ display:
   show_error: true
   font_scale: 0.7
   line_thickness: 2
-  headless: false
+  headless: false 
