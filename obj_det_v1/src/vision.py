@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from typing import List, Tuple, Optional
 from openvino.runtime import Core, CompiledModel
+from utils import letterbox
 
 logger = logging.getLogger(__name__)
 
@@ -161,25 +162,11 @@ class RobotVision:
         try:
             h_orig, w_orig = frame.shape[:2]
             
-            # Letterbox preprocessing: resize with aspect ratio preservation
-            scale = min(imgsz / h_orig, imgsz / w_orig)
-            nh, nw = int(h_orig * scale), int(w_orig * scale)
-            input_img = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+            # Use shared letterbox utility for preprocessing
+            canvas, scale, (pad_x, pad_y) = letterbox(frame, (imgsz, imgsz))
             
-            # Cache canvas if frame size hasn't changed (optimization)
-            current_frame_size = (h_orig, w_orig, nh, nw)
-            if self._cached_frame_size != current_frame_size:
-                # Create new canvas with gray background
-                canvas = np.full((imgsz, imgsz, 3), BACKGROUND_VALUE, dtype=np.uint8)
-                self._cached_frame_size = current_frame_size
-                self._cached_canvas = canvas
-            else:
-                # Reuse cached canvas (faster)
-                canvas = self._cached_canvas.copy()
-            
-            y_offset = (imgsz - nh) // 2
-            x_offset = (imgsz - nw) // 2
-            canvas[y_offset:y_offset+nh, x_offset:x_offset+nw] = input_img
+            # Post-calculate nw, nh for coordination mapping (if needed for old logic)
+            nw, nh = int(round(w_orig * scale)), int(round(h_orig * scale))
             
             # Preprocess for OpenVINO: (H, W, C) -> (1, C, H, W), normalize to [0, 1]
             input_data = canvas.transpose((2, 0, 1)).reshape((1, 3, imgsz, imgsz)).astype(np.float32) / 255.0

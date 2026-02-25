@@ -48,4 +48,5 @@ display:
   show_error: true
   font_scale: 0.7
   line_thickness: 2
-  headless: false 
+  headless: false
+  force_square: true
