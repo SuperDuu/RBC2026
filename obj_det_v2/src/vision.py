@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import List, Tuple, Optional
 from openvino.runtime import Core, CompiledModel
-
+import time
 logger = logging.getLogger(__name__)
 
 # Constants
@@ -230,37 +230,60 @@ class RobotVision:
             if len(raw_boxes) > 0:
                 indices = cv2.dnn.NMSBoxes(raw_boxes, confidences, conf_threshold, DEFAULT_NMS_THRESHOLD)
                 
-                # Dùng một set để theo dõi các ID đã được cập nhật trong frame này
-                current_frame_ids = set()
+                # Biến lưu trữ ID của các box được cập nhật trong frame này
+                new_last_boxes = {}
 
                 if len(indices) > 0:
                     for i in indices.flatten():
                         rx, ry, rw, rh = raw_boxes[i]
                         rx2, ry2 = rx + rw, ry + rh
                         conf = confidences[i]
-
-                        # --- 4. EMA Smoothing (Làm mượt Jitter) ---
-                        cx, cy = (rx + rx2) // 2, (ry + ry2) // 2
-                        # Tạo ID dựa trên lưới (grid) để nhận diện cùng một vật thể qua các frame
-                        grid_id = f"{cx//30}_{cy//30}" 
                         
-                        if grid_id in self.last_boxes:
-                            prev_box = self.last_boxes[grid_id]
+                        # Box mới phát hiện
+                        new_box = [rx, ry, rx2, ry2]
+                        
+                        # --- 4. EMA Smoothing với IoU Matching ---
+                        best_iou = 0.0
+                        best_match_id = None
+                        
+                        # Tìm box cũ trong last_boxes có độ bao phủ (IoU) cao nhất
+                        for prev_id, prev_box in self.last_boxes.items():
+                            # Tính toán mảng IoU (Intersection over Union)
+                            xA = max(new_box[0], prev_box[0])
+                            yA = max(new_box[1], prev_box[1])
+                            xB = min(new_box[2], prev_box[2])
+                            yB = min(new_box[3], prev_box[3])
+                            interArea = max(0, xB - xA) * max(0, yB - yA)
+                            
+                            boxAArea = (new_box[2] - new_box[0]) * (new_box[3] - new_box[1])
+                            boxBArea = (prev_box[2] - prev_box[0]) * (prev_box[3] - prev_box[1])
+                            iou = interArea / float(boxAArea + boxBArea - interArea) if (boxAArea + boxBArea - interArea) > 0 else 0
+                            
+                            if iou > best_iou:
+                                best_iou = iou
+                                best_match_id = prev_id
+                        
+                        # Nếu IoU lớn hơn ngưỡng (ví dụ 0.3), coi như cùng một vật thể
+                        if best_iou > 0.3 and best_match_id is not None:
+                            prev_box = self.last_boxes[best_match_id]
                             # Công thức EMA: New = Alpha * Current + (1 - Alpha) * Previous
-                            # Alpha = 0.7 giúp cân bằng giữa độ mượt và độ trễ
                             fx1 = int(self.alpha * rx + (1 - self.alpha) * prev_box[0])
                             fy1 = int(self.alpha * ry + (1 - self.alpha) * prev_box[1])
                             fx2 = int(self.alpha * rx2 + (1 - self.alpha) * prev_box[2])
                             fy2 = int(self.alpha * ry2 + (1 - self.alpha) * prev_box[3])
+                            
+                            # Gán ID cũ cho box mới (chống trùng lặp ID khi update)
+                            new_box_id = best_match_id
                         else:
                             fx1, fy1, fx2, fy2 = rx, ry, rx2, ry2
+                            # Cấp ID mới độc nhất (dùng hash tọa độ ban đầu)
+                            new_box_id = f"{rx}_{ry}_{rw}_{rh}_{time.time()}"
                         
-                        self.last_boxes[grid_id] = [fx1, fy1, fx2, fy2]
-                        current_frame_ids.add(grid_id)
+                        new_last_boxes[new_box_id] = [fx1, fy1, fx2, fy2]
                         final_boxes.append(DetectedObject(fx1, fy1, fx2, fy2, conf))
 
-                # Dọn dẹp các box cũ không còn xuất hiện để tránh rò rỉ bộ nhớ
-                self.last_boxes = {k: v for k, v in self.last_boxes.items() if k in current_frame_ids}
+                # Cập nhật lại list box mới, tự động xóa các box cũ không được match
+                self.last_boxes = new_last_boxes
                 
                 return final_boxes
             

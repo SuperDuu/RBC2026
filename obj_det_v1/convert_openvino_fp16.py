@@ -2,7 +2,7 @@ from ultralytics import YOLO
 import shutil
 import os
 
-model_path = '/home/du/Desktop/RBC2026/obj_det_v1/runs/detect/RBC2026/yolov8n_512px2/weights/best.pt'
+model_path = '/home/du/Desktop/RBC2026/obj_det_v1/runs/detect/RBC2026/yolov8n_512px/weights/best.pt'
 model = YOLO(model_path)
 export_path = model.export(format='openvino', half=True)
 
