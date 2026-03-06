@@ -14,7 +14,7 @@ def train_best_model():
     model = YOLO('yolov8n.pt') 
     model.train(
         data='datasets/data.yaml', 
-        epochs=150,               
+        epochs=100,               
         imgsz=512,               
         batch=20,                  
         device=device,                    
@@ -35,7 +35,7 @@ def train_best_model():
         scale=0.6,                
         translate=0.1,            
         fliplr=0.5,               
-        close_mosaic=20           
+        close_mosaic=10           
     )
 
 if __name__ == '__main__':
