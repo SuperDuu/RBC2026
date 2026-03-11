@@ -90,8 +90,8 @@ class RoboconSystem:
     def _init_hardware(self):
         cam_id = self.config.get("hardware.camera.device_id", 0)
         # Sửa src theo yêu cầu Camera của ông
-        self.camera = CameraStream(src=cam_id + 1, buffer_size=1).start()
-        self.uart = UARTManager(port=self.config.get("hardware.uart.port", "COM3"), 
+        self.camera = CameraStream(src=cam_id , buffer_size=1).start()
+        self.uart = UARTManager(port=self.config.get("hardware.uart.port", "COM10"), 
                                 baudrate=self.config.get("hardware.uart.baudrate", 115200))
 
     def _init_tracking(self):
@@ -195,11 +195,12 @@ class RoboconSystem:
                             self.latest_target_point = (tx, ty)
 
                 # --- CALCULATE ERROR X ---
-                if self.latest_target_point:
-                    self.latest_error_x = int(self.latest_target_point[0] - screen_center_x)
+                if self.status_text != "LOCKED" or not self.latest_target_point:
+                    self.latest_error_x = 999
                     self.uart.send_error(self.latest_error_x)
                 else:
-                    self.latest_error_x = 0
+                    self.latest_error_x = int(self.latest_target_point[0] - screen_center_x)
+                    self.uart.send_error(self.latest_error_x)
 
                 # --- FPS & TERMINAL LOGGING ---
                 self.frame_count_since_update += 1

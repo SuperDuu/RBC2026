@@ -71,7 +71,7 @@ class UARTManager:
                 self.port, 
                 self.baudrate, 
                 timeout=0, 
-                write_timeout=0
+                write_timeout=None
             )
             self.connected = True
             self.logger.info(f"UART initialized successfully on {self.port} at {self.baudrate} baud")
@@ -108,6 +108,7 @@ class UARTManager:
                     
                     # Send packet
                     self.ser.write(packet.encode())
+                    self.ser.flush()  # Ensure data is transmitted to the hardware
                 
                 except serial.SerialException as e:
                     self.logger.warning(f"UART write error: {e}. Attempting reconnection...")
@@ -139,7 +140,7 @@ class UARTManager:
                 self.port,
                 self.baudrate,
                 timeout=0,
-                write_timeout=0
+                write_timeout=None
             )
             self.connected = True
             self.logger.info(f"UART reconnected successfully on {self.port}")
