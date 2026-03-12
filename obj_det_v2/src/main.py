@@ -76,17 +76,36 @@ class RoboconSystem:
     def _setup_logging(self):
         logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    def _init_models(self):
+    def _init_models(self): 
         self.ie = Core()
+        
+        # --- 1. YOLO MODEL INFO ---
+        yolo_path = self.config.get_path("yolo_xml")
+        yolo_model = self.ie.read_model(yolo_path)
+        # Đếm tổng số phần tử trong các node Constant (trọng số)
+        yolo_params = sum(np.prod(op.get_output_shape(0)) for op in yolo_model.get_ops() if op.get_type_name() == "Constant")
+        
         yolo_device = self.config.get("models.yolo.device", "GPU")
-        self.vision = RobotVision(self.config.get_path("yolo_xml"), device=yolo_device)
+        # Giữ nguyên RobotVision của ông (truyền path hoặc object tùy thuộc vào class đó hỗ trợ gì)
+        self.vision = RobotVision(yolo_path, device=yolo_device)
+        
+        # --- 2. CNN MODEL INFO ---
+        cnn_path = self.config.get_path("cnn_xml")
+        cnn_model = self.ie.read_model(cnn_path)
+        cnn_params = sum(np.prod(op.get_output_shape(0)) for op in cnn_model.get_ops() if op.get_type_name() == "Constant")
         
         cnn_device = self.config.get("models.cnn.device", "CPU")
-        self.compiled_cnn = self.ie.compile_model(
-            model=self.ie.read_model(self.config.get_path("cnn_xml")), device_name=cnn_device)
+        self.compiled_cnn = self.ie.compile_model(model=cnn_model, device_name=cnn_device)
         self.cnn_output = self.compiled_cnn.output(0)
-        self.labels_cnn = {int(v): k for k, v in json.load(open(self.config.get_path("labels_json"))).items()}
+        
+        # --- 3. DISPLAY PARAMETERS ---
+        print("\n" + "═"*50)
+        print(f"  [MODEL ANALYSIS] RBC2026")
+        print(f"  - YOLO: {yolo_params/1e6:>6.2f}M params ({yolo_device})")
+        print(f"  - CNN : {cnn_params/1e3:>6.2f}K params ({cnn_device})")
+        print("" + "═"*50 + "\n")
 
+        self.labels_cnn = {int(v): k for k, v in json.load(open(self.config.get_path("labels_json"))).items()}
     def _init_hardware(self):
         cam_id = self.config.get("hardware.camera.device_id", 0)
         # Sửa src theo yêu cầu Camera của ông
