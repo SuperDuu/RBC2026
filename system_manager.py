@@ -247,6 +247,21 @@ class SystemManager:
                 err_x = int(target_point[0] - sc_x) if status == "LOCKED" else 999
                 if self.serial_port:
                     self.serial_port.write(f"{err_x}\n".encode())
+                    
+                    # UART Read (Bi-directional control)
+                    if self.serial_port.in_waiting > 0:
+                        try:
+                            cmd_data = self.serial_port.read(self.serial_port.in_waiting).decode('utf-8', errors='ignore')
+                            # Find the last valid command '0', '1', or '2' in buffer
+                            for char in reversed(cmd_data):
+                                if char in ['0', '1', '2']:
+                                    new_st = int(char)
+                                    if new_st != self.state:
+                                        self.state = new_st
+                                        logger.info(f"UART Mode Sync: {self.state}")
+                                    break
+                        except Exception as e:
+                            pass # Silently handle decode errors
                 
                 # FPS Calculation
                 self.frame_count_since_update += 1
