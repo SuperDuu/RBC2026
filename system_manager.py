@@ -194,6 +194,7 @@ class SystemManager:
         self.loss_counter = 0
         self.max_loss_frames = self.config['detection']['max_loss_frames']
         self.current_label = "NONE"
+        self.inference_skip = self.config['system'].get('inference_skip', 1)
 
         try:
             while self.inference_running:
@@ -221,22 +222,28 @@ class SystemManager:
                 current_vision = self.v1_vision if self.state == 1 else self.v2_vision
                 if new_pt:
                     tx, ty = current_vision.update_kalman(new_pt[0], new_pt[1])
-                    status = "LOCKED"
-                    self.current_label = a_label # Direct update
+                    self.current_status = "LOCKED"
+                    if a_label != "NONE":
+                        self.current_label = a_label
                     self.loss_counter = 0
                 else:
                     self.loss_counter += 1
                     tx, ty = current_vision.update_kalman()
-                    status = "SEARCHING" if self.loss_counter < self.max_loss_frames else "LOST"
                     
-                    if status == "SEARCHING":
-                        # LABEL HYSTERESIS: Keep the last known label
-                        pass
+                    # Status Hysteresis: Stay LOCKED if we just missed a few frames (inference_skip)
+                    if self.loss_counter <= self.inference_skip:
+                        self.current_status = "LOCKED"
+                    elif self.loss_counter < self.max_loss_frames:
+                        self.current_status = "SEARCHING"
                     else:
-                        self.current_label = "NONE" # Hard lost
+                        self.current_status = "LOST"
+                    
+                    if self.current_status == "LOST":
+                        self.current_label = "NONE"
                         tx, ty = w_orig // 2, h_orig // 2
                 
-                label = self.current_label # For usage in UI
+                status = self.current_status
+                label = self.current_label
                 
                 # Display Mapping
                 if self.force_square:
