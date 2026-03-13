@@ -1,0 +1,54 @@
+# Unified Configuration for RBC2026 Super Manager
+
+system:
+  initial_state: 2 # 0: IDLE, 1: Target (V1), 2: KFS (V2)
+  force_square: True # Use square letterbox for display and error calculation
+  inference_skip: 3 # Run inference every N frames
+  headless: false # Run without GUI (terminal only)
+  target_fps: 30 # Fixed loop rate for stability
+  test_image: true # If true, use a static image instead of camera
+  test_image_path: "/home/du/Desktop/RBC2026/obj_det_v2/datasets/user_test/img_test_user6.jpg"
+
+detection:
+  max_loss_frames: 15 # Frames to keep Kalman prediction after target lost
+  ema_alpha: 0.7 # Smoothing factor for bounding boxes (0.0 to 1.0)
+
+hardware:
+  camera:
+    device_id: 0
+  serial:
+    port: "COM10"
+    baudrate: 115200
+
+v1_model:
+  name: "SpearHead"
+  yolo_xml: "obj_det_v1/models/best_openvino_model_int8/best_int8.xml"
+  device: "GPU"
+  input_size: 512
+  conf_threshold: 0.7
+  nms_threshold: 0.5
+  target_name: "Target"
+  # Preprocessing
+  use_clahe: true
+  clip_limit: 1.5
+  mean: [0.0, 0.0, 0.0]  # Standard YOLOv8 (0..255)
+  std: [255.0, 255.0, 255.0]
+
+v2_model:
+  name: "KFS"
+  yolo_xml: "obj_det_v2/models/best_openvino_model_int8/best_int8.xml"
+  yolo_device: "GPU"
+  cnn_xml: "obj_det_v2/models/openvino_cnn_v2_3/classifier_v2_3.xml"
+  cnn_device: "CPU"
+  labels_json: "obj_det_v2/models/labels_v2.3.json"
+  yolo_input_size: 512
+  cnn_input_size: 64
+  conf_threshold_yolo: 0.6
+  conf_threshold_cnn: 0.5
+  background_value: 128
+  target_types: ["REAL"]
+  # Preprocessing
+  use_clahe: true
+  clip_limit: 1.2
+  mean: [0.0, 0.0, 0.0] # Standard grayscale (0..255)
+  std: [255.0, 255.0, 255.0]

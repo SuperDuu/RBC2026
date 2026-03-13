@@ -3,188 +3,212 @@ import torch.nn as nn
 import time
 import sys
 
-# Try to import Ultralytics and TIMM modules
 try:
     import timm
-    from ultralytics.nn.modules import Conv, C2f, SPPF, Detect, Concat
+    from ultralytics.nn.modules import Conv, C2f, SPPF, Detect
+    from ultralytics.utils.loss import v8DetectionLoss
 except ImportError as e:
     print(f"Error: Required library not found. Please run: pip install ultralytics timm")
     print(f"Details: {e}")
     sys.exit(1)
 
+
 class GhostNetV3Backbone(nn.Module):
     """
-    GhostNetV3 backbone implementation using timm.
-    Outputs feature maps at indices (3, 4) which corresponds to P4, P5.
-    Expected output channels for ghostnetv3_050: [40, 80] for P4, P5.
+    GhostNetV3-050 backbone wrapper using timm.
+    out_indices=(3, 4) -> P4 (stride 16), P5 (stride 32).
+    Suitable for large objects only (no P3).
     """
-    def __init__(self, pretrained=False):
+    def __init__(self, pretrained=True):
         super().__init__()
-        # Using feature_only=True to get intermediate feature maps
-        # out_indices=(3, 4) -> P4, P5 features
-        try:
-            self.model = timm.create_model(
-                'ghostnetv3_050', 
-                pretrained=pretrained, 
-                features_only=True, 
-                out_indices=(3, 4)
-            )
-        except RuntimeError as e:
-            if "No pretrained weights exist" in str(e):
-                print(f"Warning: {e}. Falling back to random initialization.")
-                self.model = timm.create_model(
-                    'ghostnetv3_050', 
-                    pretrained=False, 
-                    features_only=True, 
-                    out_indices=(3, 4)
-                )
-            else:
-                raise e
-        
+        self.model = timm.create_model(
+            'ghostnetv3_100',       # _050 không có pretrained weights trên timm
+            pretrained=pretrained,
+            features_only=True,
+            out_indices=(3, 4)
+        )
+        self.channels = self.model.feature_info.channels()
+        print(f"GhostNetV3-100 channels: P4={self.channels[0]}, P5={self.channels[1]}")
+
     def forward(self, x):
-        # Returns a list of tensors: [P4, P5]
         features = self.model(x)
-        return tuple(features)
+        return features[0], features[1]  # p4, p5
+
 
 class YOLOv8GhostNetV3(nn.Module):
     """
-    YOLOv8-like architecture using GhostNetV3-050 as backbone and 2-scale PANet neck.
+    YOLOv8-style detector with GhostNetV3-050 backbone.
+    2-scale neck (P4 + P5), optimized for large objects, single class.
+
+    forward() handles two call conventions:
+      - Training  : x is a dict {'img': Tensor, ...} from Ultralytics trainer
+      - Inference : x is a Tensor [B, 3, H, W]
     """
-    def __init__(self, nc=1, pretrained_backbone=False, freeze_backbone=False):
+    def __init__(self, nc=1, pretrained_backbone=True, freeze_backbone=False):
         super().__init__()
         self.nc = nc
-        
-        # --- 1. Backbone ---
+        self.criterion = None
+
+        # ── BACKBONE ──────────────────────────────────────────
         self.backbone = GhostNetV3Backbone(pretrained=pretrained_backbone)
+
         if freeze_backbone:
             for param in self.backbone.parameters():
                 param.requires_grad = False
-        
-        # Output channels from GhostNetV3-050 P4, P5: [40, 80]
-        c4, c5 = 40, 80
-        d = 64  # Neck width
-        
-        # --- 2. Neck (2-scale simplified PANet) ---
-        # SPPF on the deepest level (P5)
-        self.sppf = SPPF(c5, d, k=5)  # SPPF(80, 64)
-        
-        # Top-down path
+
+        c4, c5 = self.backbone.channels
+        d = 64  # neck width
+
+        # ── NECK (PANet, 2-scale) ──────────────────────────────
+        self.sppf     = SPPF(c5, d, k=5)
+        self.lat4     = Conv(c4, d, 1, 1)
         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
-        self.lat4 = Conv(c4, d, 1, 1) # lateral 1x1 to align P4 (40) -> 64
-        self.td1 = C2f(d + d, d, n=2, shortcut=False) # 64+64 -> 64
-        
-        # Bottom-up path
-        self.down1 = Conv(d, d, 3, 2) # Downsample P4_feat to stack on P5 path
-        self.bu1 = C2f(d + d, d, n=2, shortcut=False) # 64+64 -> 64
-        
-        self.concat = Concat(dimension=1)
-        
-        # --- 3. Head ---
-        # Detect head expects [P4_feat, P5_feat] with channels [64, 64]
+        self.td1      = C2f(d + d, d, n=2, shortcut=False)  # top-down P5->P4
+        self.down1    = Conv(d, d, 3, 2)
+        self.bu1      = C2f(d + d, d, n=2, shortcut=False)  # bottom-up P4->P5
+
+        # ── HEAD ──────────────────────────────────────────────
         self.head = Detect(nc=nc, ch=(d, d))
+        # model.model is required by v8DetectionLoss
+        self.model = nn.ModuleList([self.head])
 
-    def forward(self, x):
-        # Backbone: P4 (40, 40x40), P5 (80, 20x20)
-        p4, p5 = self.backbone(x)
-        
-        # P5 (80) -> SPPF -> (64, 20x20)
+    def _extract_features(self, imgs):
+        """Backbone + neck -> (td1, bu1)."""
+        p4, p5 = self.backbone(imgs)
+
         p5_feat = self.sppf(p5)
-        
-        # Top-down: p5_feat (64) -> Upsample -> (64, 40x40)
-        p5_up = self.upsample(p5_feat)
-        p4_lat = self.lat4(p4) # 40 -> 64
-        td1 = self.td1(self.concat([p5_up, p4_lat])) # (64+64=128) -> 64
-        
-        # Bottom-up: td1 (64) -> Downsample -> (64, 20x20)
-        td1_down = self.down1(td1)
-        bu1 = self.bu1(self.concat([td1_down, p5_feat])) # (64+64=128) -> 64
-        
-        # Final outputs for Detect head: [P4, P5]
-        return self.head([td1, bu1])
+        p4_lat  = self.lat4(p4)
+        td1     = self.td1(torch.cat([self.upsample(p5_feat), p4_lat], dim=1))
+        bu1     = self.bu1(torch.cat([self.down1(td1), p5_feat], dim=1))
+        return td1, bu1
 
-def build_model(nc=1, pretrained_backbone=False, freeze_backbone=False):
-    """
-    Build the YOLOv8-GhostNetV3 model and print summary.
-    """
+    def forward(self, x, *args, **kwargs):
+        if isinstance(x, dict):
+            # Ultralytics trainer passes full batch dict during training
+            td1, bu1 = self._extract_features(x['img'])
+            preds = self.head([td1, bu1])
+            if self.training:
+                if self.criterion is None:
+                    self.criterion = v8DetectionLoss(self)
+                return self.criterion(preds, x)  # returns (loss, loss_items)
+            return preds
+        else:
+            # Tensor input: inference or ONNX export or Validation (with augment=True/False)
+            td1, bu1 = self._extract_features(x)
+            return self.head([td1, bu1])       # returns predictions
+
+
+def build_model(nc=1, pretrained_backbone=True, freeze_backbone=False):
+    """Build model and print parameter summary."""
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = YOLOv8GhostNetV3(nc=nc, pretrained_backbone=pretrained_backbone, freeze_backbone=freeze_backbone).to(device)
-    
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    
-    print("-" * 30)
-    print(f"Model: YOLOv8-GhostNetV3-050 (2-scale)")
-    print(f"Device: {device}")
-    print(f"Total parameters: {total_params:,}")
-    print(f"Trainable parameters: {trainable_params:,}")
-    print("-" * 30)
-    
+
+    model = YOLOv8GhostNetV3(
+        nc=nc,
+        pretrained_backbone=pretrained_backbone,
+        freeze_backbone=freeze_backbone
+    ).to(device)
+
+    total     = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    backbone  = sum(p.numel() for p in model.backbone.parameters())
+
+    print("─" * 40)
+    print(f"  Model    : YOLOv8-GhostNetV3-050 (2-scale)")
+    print(f"  Classes  : {nc}")
+    print(f"  Device   : {device}")
+    print(f"  Backbone : {backbone/1e6:.2f}M params")
+    print(f"  Neck+Head: {(total-backbone)/1e6:.2f}M params")
+    print(f"  Total    : {total/1e6:.2f}M params")
+    print(f"  Trainable: {trainable/1e6:.2f}M params")
+    print("─" * 40)
+
     return model
+
 
 def test_forward():
     """
-    Test forward pass, verify output shapes and measure latency.
+    Verify shapes and latency.
+    Expected output: [B, 5, 2000]
+    640x640 -> 40x40 + 20x20 = 2000 anchors
     """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = build_model(nc=1)
+    model  = build_model(nc=1)
     model.eval()
-    
-    # Dummy input (B, C, H, W)
-    img = torch.randn(2, 3, 640, 640).to(device)
-    
-    print("\n[Testing Forward Pass]")
-    print("Expected anchors for 2-scale 640x640: 40*40 + 20*20 = 2000")
-    
-    with torch.no_grad():
-        # First pass to warm up
-        outputs = model(img)
-        
-        # Verify output shape [2, 5, 2000] (5 = 4 box + 1 nc)
-        if isinstance(outputs, (list, tuple)):
-            print(f"Output type: {type(outputs)}")
-            for i, out in enumerate(outputs):
-                if isinstance(out, torch.Tensor):
-                    print(f"Output {i} shape: {out.shape}")
-        else:
-            print(f"Output shape: {outputs.shape}")
-            expected_shape = (2, 5, 2000)
-            if outputs.shape == expected_shape:
-                print(f"SUCCESS: Output shape matches {expected_shape}")
-            else:
-                print(f"WARNING: Output shape {outputs.shape} mismatch with expected {expected_shape}")
-            
-    print("\n[Benchmarking Latency]")
-    num_iters = 10
-    start_time = time.time()
-    with torch.no_grad():
-        for _ in range(num_iters):
-            _ = model(img)
-    
-    end_time = time.time()
-    avg_time = (end_time - start_time) / num_iters
-    print(f"Average inference time over {num_iters} iterations: {avg_time:.4f}s ({1/avg_time:.2f} FPS)")
-    
-    return model, img
 
-if __name__ == "__main__":
-    model, dummy_input = test_forward()
+    dummy = torch.randn(2, 3, 640, 640).to(device)
+
+    print("\n[Testing Forward Pass]")
+    print("Expected: 40x40 + 20x20 = 2000 anchors -> shape [2, 5, 2000]")
+    with torch.no_grad():
+        outputs = model(dummy)
+
+    if isinstance(outputs, (list, tuple)):
+        for i, o in enumerate(outputs):
+            if isinstance(o, torch.Tensor):
+                print(f"  Output[{i}]: {o.shape}")
+    else:
+        print(f"  Output: {outputs.shape}")
+
+    print("\n[Benchmarking]")
+    n = 10
+    t = time.time()
+    with torch.no_grad():
+        for _ in range(n):
+            _ = model(dummy)
+    avg = (time.time() - t) / n * 1000
+    print(f"  Avg: {avg:.1f}ms  ({1000/avg:.1f} FPS)")
+
+    return model
+def benchmark_vs_yolov8n():
+    from ultralytics import YOLO
+    import torch, time
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    dummy  = torch.randn(1, 3, 640, 640).to(device)
+    n      = 100
+
+    # ── GhostNetV3 ────────────────────────────────────────
+    ghost = build_model(nc=1).to(device)
+    ghost.eval()
+    with torch.no_grad():
+        for _ in range(10): ghost(dummy)          # warmup
+        t = time.time()
+        for _ in range(n): ghost(dummy)
+    ghost_ms = (time.time() - t) / n * 1000
+
+    # ── YOLOv8n gốc ───────────────────────────────────────
+    yolo = YOLO('yolov8n.pt').model.to(device)
+    yolo.eval()
+    with torch.no_grad():
+        for _ in range(10): yolo(dummy)           # warmup
+        t = time.time()
+        for _ in range(n): yolo(dummy)
+    yolo_ms = (time.time() - t) / n * 1000
+
+    print(f"\n{'─'*40}")
+    print(f"  GhostNetV3 (bản của bạn): {ghost_ms:.1f}ms")
+    print(f"  YOLOv8n gốc            : {yolo_ms:.1f}ms")
+    print(f"  Nhanh hơn              : {yolo_ms/ghost_ms:.2f}x")
+    print(f"{'─'*40}")
+
     
+
+if __name__ == '__main__':
+    model = test_forward()
+
     print("\n[Exporting to ONNX]")
-    onnx_file = "ghostnetv3_yolov8n.onnx"
     try:
-        # We need to set the model to eval mode and use a single batch for simple export
         model.eval()
-        single_batch_input = torch.randn(1, 3, 640, 640).to(next(model.parameters()).device)
-        
+        device = next(model.parameters()).device
+        dummy  = torch.randn(1, 3, 640, 640).to(device)
         torch.onnx.export(
-            model,
-            single_batch_input,
-            onnx_file,
+            model, dummy, "ghostnetv3_yolov8n.onnx",
             input_names=['images'],
             output_names=['output0'],
             opset_version=12,
             dynamic_axes={'images': {0: 'batch'}, 'output0': {0: 'batch'}}
         )
-        print(f"Model exported successfully to {onnx_file}")
+        print("  ONNX exported: ghostnetv3_yolov8n.onnx")
     except Exception as e:
-        print(f"Failed to export ONNX: {e}")
+        print(f"  ONNX export failed: {e}")
+    benchmark_vs_yolov8n()

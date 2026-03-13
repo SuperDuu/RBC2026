@@ -1,81 +1,108 @@
 import os
 import torch
+import torch.nn as nn
 from ultralytics.models.yolo.detect import DetectionTrainer
 from ultralytics.utils import DEFAULT_CFG
 from ghostnetv3_yolov8n import YOLOv8GhostNetV3
 
+
 class GhostNetV3Trainer(DetectionTrainer):
     """
-    Custom DetectionTrainer for YOLOv8 with GhostNetV3 backbone.
+    Custom DetectionTrainer tích hợp GhostNetV3-100 backbone.
+    2-scale neck (P4+P5) tối ưu cho object to, 1 class.
     """
-    def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks=None):
-        super().__init__(cfg, overrides, _callbacks)
 
     def get_model(self, cfg=None, weights=None, verbose=True):
-        """
-        Initialize the custom YOLOv8GhostNetV3 model.
-        """
-        # nc is obtained from the data.yaml via the trainer configuration
-        nc = self.data['nc'] if 'nc' in self.data else 1
-        model = YOLOv8GhostNetV3(nc=nc, pretrained_backbone=False) # Use our custom class
-        
-        # Ultralytics expects these attributes for certain logic
-        model.stride = torch.tensor([16.0, 32.0]) 
-        # Attach names to the head if available
-        if hasattr(self, 'data') and 'names' in self.data:
-            model.names = self.data['names']
-        else:
-            model.names = {i: f'class_{i}' for i in range(nc)}
-            
+        """Khởi tạo YOLOv8GhostNetV3, bỏ qua cfg/weights mặc định."""
+
+        nc = self.data.get('nc', 1)
+
+        # ── Tạo model ────────────────────────────────────────
+        model = YOLOv8GhostNetV3(
+            nc=nc,
+            pretrained_backbone=True
+        )
+
+        # ── Stride: bắt buộc cho anchor generation ───────────
+        strides           = torch.tensor([16.0, 32.0])
+        model.stride      = strides
+        model.head.stride = strides
+
+        # ── Attributes bắt buộc cho Ultralytics trainer ──────
+        model.end2end  = False
+        model.args     = self.args
+        model.task     = 'detect'
+        model.pt_path  = None
+        model.yaml     = None
+
+        # ── Head attributes ───────────────────────────────────
+        model.head.nc      = nc
+        model.head.nl      = 2    # số scale (P4, P5)
+        model.head.reg_max = 16   # mặc định YOLOv8
+
+        # ── Names ─────────────────────────────────────────────
+        model.names = self.data.get(
+            'names', {i: f'class_{i}' for i in range(nc)}
+        )
+
+        if verbose:
+            total     = sum(p.numel() for p in model.parameters()) / 1e6
+            trainable = sum(
+                p.numel() for p in model.parameters() if p.requires_grad
+            ) / 1e6
+            backbone  = sum(
+                p.numel() for p in model.backbone.parameters()
+            ) / 1e6
+            print(f"\n{'─'*40}")
+            print(f"  Model    : YOLOv8-GhostNetV3-100 (2-scale)")
+            print(f"  Classes  : {nc}")
+            print(f"  Backbone : {backbone:.2f}M params")
+            print(f"  Total    : {total:.2f}M params")
+            print(f"  Trainable: {trainable:.2f}M params")
+            print(f"{'─'*40}\n")
+
         return model
 
-def train_ghostnet_model():
-    """
-    Setup and run training for the GhostNetV3-YOLOv8n model.
-    Inherits hyperparameters from original yolov8n_train.py.
-    """
-    if torch.cuda.is_available():
-        device = '0'
-        torch.cuda.empty_cache() 
-        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
-        print(f"Using GPU device: {device}")
-    else:
-        device = 'cpu'
-        print("No GPU found! Using CPU.")
 
-    # Training configuration matching yolov8n_train.py
+def train():
+    device = '0' if torch.cuda.is_available() else 'cpu'
+    if device == '0':
+        torch.cuda.empty_cache()
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+    print(f"Device: {'GPU' if device == '0' else 'CPU'}")
+
     train_args = dict(
-        model='yolov8n.pt',       # Satisfy string requirement (ignored in get_model)
-        data='datasets/data.yaml', 
-        epochs=100,               
-        imgsz=512,               
-        batch=20,                  
-        device=device,                    
-        workers=4,                
-        project='RBC2026',                
-        name='ghostnetv3_050_2scale_512px', 
-        patience=30,              
+        model='yolov8n.pt',                    # placeholder, bị override bởi get_model
+        data='datasets/data.yaml',
+        epochs=120,
+        imgsz=512,
+        batch=8,
+        device=device,
+        workers=4,
+        project='RBC2026',
+        name='ghostnetv3_050_2scale_512px',
+        patience=30,
         save=True,
-        cache=False,              
+        cache='ram',
+        # ── Augmentation ──────────────────────────────────────
+        mosaic=1.0,
+        mixup=0.2,
+        degrees=20.0,
+        scale=0.6,
+        translate=0.1,
+        fliplr=0.5,
+        close_mosaic=20,
+        # ── Hyperparams ───────────────────────────────────────
+        lr0=0.01,
+        cos_lr=True,
+        label_smoothing=0.05,
+        dropout=0.1,
         overlap_mask=True,
-        lr0=0.01,                 
-        cos_lr=True,              
-        label_smoothing=0.05,     
-        dropout=0.1,              
-        mosaic=1.0,               
-        mixup=0.2,                
-        degrees=20.0,             
-        scale=0.6,                
-        translate=0.1,            
-        fliplr=0.5,               
-        close_mosaic=10
     )
 
-    # Initialize custom trainer
     trainer = GhostNetV3Trainer(overrides=train_args)
-    
-    # Start training
     trainer.train()
 
+
 if __name__ == '__main__':
-    train_ghostnet_model()
+    train()
