@@ -193,6 +193,7 @@ class SystemManager:
 
         self.loss_counter = 0
         self.max_loss_frames = self.config['detection']['max_loss_frames']
+        self.current_label = "NONE"
 
         try:
             while self.inference_running:
@@ -221,7 +222,7 @@ class SystemManager:
                 if new_pt:
                     tx, ty = current_vision.update_kalman(new_pt[0], new_pt[1])
                     status = "LOCKED"
-                    label = a_label # Direct update
+                    self.current_label = a_label # Direct update
                     self.loss_counter = 0
                 else:
                     self.loss_counter += 1
@@ -229,12 +230,13 @@ class SystemManager:
                     status = "SEARCHING" if self.loss_counter < self.max_loss_frames else "LOST"
                     
                     if status == "SEARCHING":
-                        # LABEL HYSTERESIS: Keep the last known label instead of "NONE"
-                        # We don't update label here, so it stays what it was in previous frame
+                        # LABEL HYSTERESIS: Keep the last known label
                         pass
                     else:
-                        label = "NONE" # Hard lost
+                        self.current_label = "NONE" # Hard lost
                         tx, ty = w_orig // 2, h_orig // 2
+                
+                label = self.current_label # For usage in UI
                 
                 # Display Mapping
                 if self.force_square:
