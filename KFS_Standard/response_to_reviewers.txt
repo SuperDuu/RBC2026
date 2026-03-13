@@ -1,0 +1,48 @@
+Kính gửi Ban biên tập và Quý Phản biện,
+
+Chúng tôi xin chân thành cảm ơn những nhận xét sâu sắc và mang tính xây dựng từ Quý Phản biện đối với bài báo của chúng tôi. Chúng tôi đã nghiêm túc xem xét, tiếp thu và tiến hành chỉnh sửa bản thảo một cách cẩn trọng dựa trên các góp ý này. Dưới đây là phần trình bày chi tiết từng phản hồi của chúng tôi đối với các nhận xét của Quý Phản biện.
+
+======================================================
+Phản biện A (Reviewer A)
+======================================================
+1. Lý do lựa chọn YOLOv8n làm mô hình phát hiện.
+Phản hồi: Chúng tôi xin trân trọng cảm ơn câu hỏi rất xác đáng của Phản biện. Việc lựa chọn YOLOv8n xuất phát từ sự cân bằng tối ưu giữa tốc độ suy luận (latency) và độ chính xác (mAP) khi triển khai trên phần cứng hạn chế (Surface Go 2). Khác với YOLOv5n hay YOLOv7n, YOLOv8n sử dụng kiến trúc anchor-free và mô-đun C2f mang lại khả năng định vị tọa độ hộp bao (bounding box) vượt trội đối với các đối tượng có kích thước trung bình và nhỏ, đồng thời tối ưu hóa được số lượng tham số. Để làm rõ hơn luận điểm này, trong bản thảo chỉnh sửa, chúng tôi đã bổ sung một mục phụ trình bày các thử nghiệm so sánh trực tiếp hiệu năng giữa YOLOv5n, YOLOv7n, YOLOv8n, và YOLOv8s chạy qua OpenVINO trên iGPU của Surface Go 2, minh chứng rõ ràng YOLOv8n là sự lựa chọn tối ưu nhất cho bài toán này.
+
+2. Động lực của thiết kế kiến trúc hai giai đoạn (two-stage) so với kiến trúc một giai đoạn (single-stage).
+Phản hồi: Cảm ơn sự quan tâm của Phản biện. Động lực chính cho thiết kế hai giai đoạn đến từ thách thức đặc thù của tập dữ liệu: phân loại 31 lớp chữ Giáp Cốt (Oracle Bone Scripts) có tính tự đồng dạng (self-similarity) rất cao. Một mô hình YOLO một giai đoạn (vừa phát hiện vừa phân loại 31 lớp) gặp khó khăn lớn trong việc khai thác các đặc trưng tô-pô tinh tế của các ký tự này, đặc biệt khi yêu cầu mô hình phải nhẹ để chạy máy tính vi bìa Edge. Bằng cách tách biệt bài toán: YOLO chỉ làm nhiệm vụ định vị ROI (mức độ tính toán cao nhưng giảm gánh nặng phân loại), và một mạng CNN tùy chỉnh nhẹ (separable CNN) chuyên biệt cho việc phân tích hình thái học vi mô của ký tự (do đầu vào đã được crop nhỏ), chúng tôi đạt được độ chính xác phân loại cao hơn đáng kể. Chúng tôi đã nhấn mạnh động lực thiết kế kiến trúc phân rã này và bổ sung dữ liệu thực nghiệm so sánh phương pháp đề xuất với mạng YOLOv8 một giai đoạn trong phần Phương pháp (Methodology).
+
+3. Chi tiết về quá trình thu thập bộ dữ liệu.
+Phản hồi: Chúng tôi đã mở rộng khối lượng thông tin mô tả chi tiết về quá trình thu thập dữ liệu trong bản thảo. Cụ thể, dữ liệu được thu thập dưới nhiều điều kiện ánh sáng thực tế nhằm mô phỏng môi trường thi đấu: ánh sáng huỳnh quang mạnh (khoảng 1000 lux), ánh sáng môi trường yếu (khoảng 300 lux), và ánh sáng có tính định hướng tạo nhiễu đổ bóng. Góc nhìn (viewpoint) của camera biến thiên từ 30 đến 60 độ so với mặt ngang. Chúng tôi cũng báo cáo rõ ràng số lượng mẫu (samples) thu thập được cho từng lớp và chỉ định rõ chiến lược phân chia tập dữ liệu thành 70% huấn luyện (training), 15% xác thực (validation) và 15% kiểm thử (test) để đảm bảo tính tái lập (reproducibility) của nghiên cứu.
+
+4. Chỉ số FPS trong kết quả cấu hình tối ưu (Bảng 2).
+Phản hồi: Xin lỗi vì sự thiếu rõ ràng trong bản thảo đầu tiên. Chúng tôi xin đính chính rằng giá trị FPS được báo cáo trong Bảng 2 là tốc độ xử lý của cả tổ hợp đường ống hoàn chỉnh tích hợp cơ chế Bỏ qua khung hình (Frame-skipping/Skip-frame). Qua khảo sát thực tế trên Surface Go 2, kiến trúc định vị YOLOv8n gặp giới hạn nút thắt cổ chai ở mức FPS xấp xỉ 17.5. Để khắc phục triệt để, hệ thống được thiết kế chiến lược nội suy: YOLO chỉ kích hoạt mỗi chu kỳ 3 khung hình. Trong 2 khung hình xen kẽ nghỉ, hệ thống bù đắp vị trí bằng thuật toán dự đoán tuyến tính Kalman Filter và tận dụng mô hình Separable CNN siêu nhẹ xử lý lên tới 400 FPS để duy trì nhận diện ký tự cực nhanh dựa trên toạ độ suy đoán. Sự kết nối linh hoạt này nâng tổng thể hệ thống từ ngưỡng 17.5 FPS lên mức 30-35 FPS thời gian thực chuẩn xuất video mà không suy giảm đáng kể độ chính xác. Chúng tôi đã chia nhỏ diễn giải kết quả tốc độ Bảng 2 thành các cột độc lập (độ trễ YOLO vs độ trễ CNN) và trình bày tường tận tham chiếu tối ưu thuật toán này trong bài báo bổ sung.
+
+5. Điều kiện phần cứng tiến hành thực nghiệm cho Bảng 2.
+Phản hồi: Điểm này đã được chúng tôi hoàn thiện. Tất cả các cấu hình từ cơ sở (baseline) đến tối ưu (optimized) trong Bảng 2 đều được đánh giá hoàn toàn trên cùng một hệ lụy phần cứng: máy tính Microsoft Surface Go 2 (CPU Intel Pentium Gold 4425Y, iGPU Intel UHD Graphics 615). Chúng tôi đã bổ sung thông số cấu hình cụ thể này vào trong mô tả thiết lập phần hiện tại và nội dung Bảng 2 để đảm bảo sự chặt chẽ của việc so sánh.
+
+6. Cấu hình ảnh Grayscale thay vì RGB.
+Phản hồi: Đây là một nhận xét rất sắc bén từ Phản biện. Bề mặt các khối vật thể thực tế có mang thông tin màu sắc (khối xanh, khối đỏ); tuy nhiên, 31 nhãn phân loại của chúng tôi là các chữ Giáp Cốt, vốn được định danh thuần túy bởi **cấu trúc đặc điểm hình thái** (đường nét, hình học tô-pô), hoàn toàn không phụ thuộc vào màu sắc vật liệu. Việc chuyển đổi các vùng ROI gốc sang ảnh Grayscale mang lại ba lợi ích to lớn trên thiết bị cạnh (edge): (1) Loạt bỏ ảnh hưởng nhiễu sắc độ (chromatic distortions) gây ra do ánh sáng môi trường đa dạng, (2) Giảm độ phức tạp tính toán x3 lần (về số lượng phép nhân tích chập) ở các lớp đầu vào của mạng CNN, và (3) bảo lưu toàn vẹn các đặc trưng viền/góc (edges/corners). Chúng tôi đã cung cấp thí nghiệm nhỏ gọn trong phần thảo luận cho thấy việc sử dụng Grayscale giảm triệt để độ trễ nhận diện (latency) mà không làm suy giảm độ chính xác (< 0.5%) so với phương pháp giữ nguyên hệ RGB.
+
+
+======================================================
+Phản biện B (Reviewer B)
+======================================================
+1. Phần giới thiệu quá dài, thiếu điểm duyệt tài liệu (literature review) và không làm nổi bật được tính mới.
+Phản hồi: Chúng tôi hoàn toàn đồng tình với góp ý này. Phần Giới thiệu (Introduction) đã được viết lại một cách cô đọng hơn, cắt giảm phần bối cảnh tổng quan không cần thiết và mở rộng phần Tổng quan Tài liệu (Literature Review) tập trung vào các kỹ thuật học sâu nhẹ (lightweight deep learning) và ứng dụng trí tuệ nhân tạo biên (Edge AI) trong những năm gần đây. Tính mới (novelty) của nghiên cứu hiện đã được làm nổi bật rõ ràng, bao gồm: 
+   - Đề xuất một kiến trúc YOLO+CNN hai giai đoạn nhận thức phần cứng (hardware-aware) nhẹ nhằm giải quyết riêng biệt bài toán định vị thời gian thực vòng quét và phân loại đặc trưng hình học sắc nét cường độ cao.
+   - Thể hiện sự tinh tế trong việc kết hợp lược đồ biến đổi ảnh (grayscale/INT8 quantization) và tăng tốc xử lý bất đồng bộ CPU-iGPU qua kiến trúc OpenVINO cho mạng siêu nhỏ.
+
+2. Khó khăn khi triển khai YOLO trên thiết bị hạn chế phần cứng và giải pháp đề xuất.
+Phản hồi: Việc triển khai trực tiếp các mô hình phát hiện đối tượng phổ biến trên các thiết bị tối giản siêu nhỏ nhắn như Surface Go 2 dễ dàng dẫn đến hiện tượng tắc nghẽn xử lý và quá nhiệt hệ thống (thermal throttling). Sự đóng góp của bài báo nằm ở cách khắc phục khó khăn trên: Thay vì sử dụng mô hình gốc, hệ thống kết hợp kỹ thuật lượng tử hóa trọng số INT8 (INT8 quantization) thu gọn số liệu mô hình YOLOv8n để thực thi mượt mà qua hạt nhân iGPU (OpenVINO), và đồng thời đẩy mạng custom separable CNN chuyên trách (hoạt động rất gọn nhẹ do chỉ quét ROI nhỏ) xử lý tính toán trên CPU. Kiến trúc chạy song song và phân tách tác vụ không gian tài nguyên này giúp chúng tôi giữ vững mức khung hình cần thiết cho một môi trường robot động thái thực sự. Phần tranh luận này đã được làm rõ hơn trong mục Phương pháp luận.
+
+3. Tham khảo nghèo nàn và lỗi thời.
+Phản hồi: Chúng tôi đã cập nhật và thay thế một số lượng lớn các tài liệu tham khảo bằng những nghiên cứu chuyên sâu, có độ phản biện cao xuất bản trong khoảng 2020-2024 về kiến trúc mạng Nơ-ron nhẹ, Edge computing và ứng dụng OpenVINO vào Tự động hóa. 
+
+4. Một số hình vẽ bị nhỏ và có tiếng Việt (Hình 8, 9).
+Phản hồi: Chúng tôi thành thật xin lỗi vì sơ suất này. Các Hình 8 và Hình 9 đã được vẽ lại hoàn toàn, 100% sử dụng thuật ngữ tiếng Anh trong toàn bộ nội dung. Chúng tôi cũng đã cải thiện chất lượng vector, tăng cường cỡ chữ, chỉnh tông và bố cục của tệp tin ảnh nhằm tối đa hoá khả năng quan sát và đánh giá khoa học cho người đọc.
+
+5. Điều kiện ánh sáng ảnh hưởng ra sao đến độ chính xác.
+Phản hồi: Để phản hồi thắc mắc này, bài báo đã được bổ sung thêm phần phân tích tính mạnh mẽ (robustness analysis) trong mục Kết quả thực nghiệm. Nhờ vào việc chuyển đổi đầu vào CNN thành không gian mức xám (Grayscale), hiệu quả nhận diện hình thái chữ không bị suy giảm bởi sự chênh lệch quang sai môi trường. Sự kết nối cấu tạo giữa cơ chế rút ROI có độ chính xác vùng lặp ánh sáng qua YOLO cùng với tệp dataset được áp dụng rộng rãi cơ chế Augmentation (tuỳ biến độ sáng, tăng giảm tương phản - brightness/contrast adjustments) giúp biểu đồ nhận diện duy trì mức tín nhiệm (Confidence) và độ cân bằng rất ổn định ở các vùng ánh sáng có cường độ chênh lệch (300 lux tới 1000 lux).
+
+Xin trân trọng kính chào,
+Nhóm tác giả.
