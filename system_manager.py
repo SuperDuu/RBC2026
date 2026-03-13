@@ -209,11 +209,11 @@ class SystemManager:
                 h_orig, w_orig = frame.shape[:2]
 
                 # Consume latest AI results
-                new_pt, label = (None, "NONE")
+                new_pt, a_label = (None, "NONE")
                 all_dets = []
                 with self.inference_lock:
                     if self.latest_inference_data:
-                        (new_pt, label), all_dets = self.latest_inference_data
+                        (new_pt, a_label), all_dets = self.latest_inference_data
                         self.latest_inference_data = None
                 
                 # Kalman Tracking & Smoothing
@@ -221,12 +221,19 @@ class SystemManager:
                 if new_pt:
                     tx, ty = current_vision.update_kalman(new_pt[0], new_pt[1])
                     status = "LOCKED"
+                    label = a_label # Direct update
                     self.loss_counter = 0
                 else:
                     self.loss_counter += 1
                     tx, ty = current_vision.update_kalman()
                     status = "SEARCHING" if self.loss_counter < self.max_loss_frames else "LOST"
-                    if status == "LOST":
+                    
+                    if status == "SEARCHING":
+                        # LABEL HYSTERESIS: Keep the last known label instead of "NONE"
+                        # We don't update label here, so it stays what it was in previous frame
+                        pass
+                    else:
+                        label = "NONE" # Hard lost
                         tx, ty = w_orig // 2, h_orig // 2
                 
                 # Display Mapping
@@ -244,7 +251,7 @@ class SystemManager:
                     scale = 1.0; pw = ph = 0
                 
                 # Error Calculation & Serial
-                err_x = int(target_point[0] - sc_x) if status == "LOCKED" else 999
+                err_x = int(target_point[0] - sc_x) if status in ["LOCKED", "SEARCHING"] else 999
                 if self.serial_port:
                     self.serial_port.write(f"{err_x}\n".encode())
                     
@@ -273,7 +280,8 @@ class SystemManager:
                 # UI
                 if not self.headless:
                     df = frame if not self.force_square else letterbox(frame, (512, 512))[0]
-                    color = (0, 255, 0) if status == "LOCKED" else (255, 255, 0) if status == "SEARCHING" else (0, 0, 255)
+                    # Color Unification: Both LOCKED and SEARCHING are Green (0, 255, 0)
+                    color = (0, 255, 0) if status in ["LOCKED", "SEARCHING"] else (0, 0, 255)
                     
                     # Draw All Boxes in Test Mode
                     if self.use_test_image and all_dets:

@@ -15,6 +15,15 @@ A high-performance, professional-grade vision pipeline designed for the **Roboco
 
 ---
 
+## ✅ Completed Tasks
+
+### [x] Tracking & Label Stabilization
+- [x] Implement label hysteresis (persist label during SEARCHING)
+- [x] Unify SEARCHING/LOCKED visualization colors (Cyan -> Green)
+- [x] Refine `err_x` sending during search transitions
+
+---
+
 ## 📁 Project Structure
 
 ```text
@@ -77,6 +86,9 @@ Each folder contains a `main.py` for testing specific configurations:
 ```bash
 python3 SpearHead_HighPerformance/main.py
 ```
+- **Giao tiếp UART 2 chiều**: Hệ thống nhận lệnh từ Robot qua các ký tự `'0'`, `'1'`, `'2'` để chuyển trạng thái tương ứng.
+- **Ổn định mục tiêu (Hysteresis)**: Giữ nhãn và màu xanh lá ổn định ngay cả khi AI bị mất khung hình nhẹ (Kalman prediction), giúp loại bỏ hiện tượng nháy màu xanh dương (Cyan).
+- **Tên gọi chuyên nghiệp**: Sử dụng `system_manager.py` (Lớp `SystemManager`) và `global_config.yaml` theo tiêu chuẩn công nghiệp.
 
 ### 3. Test Mode (Debugging)
 Enable `test_image: true` in `global_config.yaml` to run inference on static images with all bounding boxes rendered (Green for REAL, Gray for FAKE).
