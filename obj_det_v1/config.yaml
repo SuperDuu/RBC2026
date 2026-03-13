@@ -20,7 +20,7 @@ hardware:
 # Model configuration - OPTIMIZED FOR INT8
 models:
   yolo:
-    device: "GPU"  
+    device: "CPU"  
     class_id: 0
     input_size: 512  
     conf_threshold: 0.6

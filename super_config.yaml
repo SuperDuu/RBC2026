@@ -6,7 +6,7 @@ system:
   inference_skip: 3 # Run inference every N frames
   headless: false # Run without GUI (terminal only)
   target_fps: 30 # Fixed loop rate for stability
-  test_image: true # If true, use a static image instead of camera
+  test_image: false # If true, use a static image instead of camera
   test_image_path: "/home/du/Desktop/RBC2026/obj_det_v2/datasets/user_test/img_test_user6.jpg"
 
 detection:
@@ -29,7 +29,7 @@ v1_model:
   nms_threshold: 0.5
   target_name: "Target"
   # Preprocessing
-  use_clahe: true
+  use_clahe: false
   clip_limit: 1.5
   mean: [0.0, 0.0, 0.0]  # Standard YOLOv8 (0..255)
   std: [255.0, 255.0, 255.0]
@@ -48,7 +48,7 @@ v2_model:
   background_value: 128
   target_types: ["REAL"]
   # Preprocessing
-  use_clahe: true
+  use_clahe: false
   clip_limit: 1.2
   mean: [0.0, 0.0, 0.0] # Standard grayscale (0..255)
   std: [255.0, 255.0, 255.0]

@@ -15,6 +15,7 @@ import json
 import logging
 import numpy as np
 import ctypes
+import threading
 from pathlib import Path
 from typing import Optional, Tuple, List
 from openvino.runtime import Core
@@ -51,24 +52,34 @@ class RoboconSystem:
         
         self.latest_target_point = None
         self.latest_label = "NONE"
-        self.latest_error_x = 0  # Biến lưu trữ sai số X
+        self.latest_error_x = 0
         self.status_text = "SEARCHING"
         self.last_target_x = None 
         self.target_switch_threshold = 80
         
         self.is_headless = self.config.get("display.headless", False)
         self.target_fps = 30
-        self.frame_duration = 1.0 / self.target_fps - 0.012
+        self.frame_duration = 1.0 / self.target_fps
         
         self.display_fps = 0.0
         self.last_fps_update_time = time.time()
         self.frame_count_since_update = 0
 
+        # --- ASYNC INFERENCE STATE ---
+        self.inference_lock = threading.Lock()
+        self.latest_inference_data = None
+        self.inference_running = True
+
         try:
             self._init_models()
             self._init_hardware()
             self._init_tracking()
-            self.logger.info(f"--- SYSTEM READY | MODE: {self.target_mode} | HEADLESS: {self.is_headless} ---")
+
+            # Khởi chạy luồng Inference ngầm (YOLO + CNN)
+            self.inf_thread = threading.Thread(target=self._inference_loop, daemon=True)
+            self.inf_thread.start()
+
+            self.logger.info(f"--- V3 SYSTEM READY (ASYNC) | MODE: {self.target_mode} | FPS: {self.target_fps} ---")
         except Exception as e:
             self.logger.error(f"Init Failed: {e}")
             raise
@@ -82,11 +93,9 @@ class RoboconSystem:
         # --- 1. YOLO MODEL INFO ---
         yolo_path = self.config.get_path("yolo_xml")
         yolo_model = self.ie.read_model(yolo_path)
-        # Đếm tổng số phần tử trong các node Constant (trọng số)
         yolo_params = sum(np.prod(op.get_output_shape(0)) for op in yolo_model.get_ops() if op.get_type_name() == "Constant")
         
         yolo_device = self.config.get("models.yolo.device", "GPU")
-        # Giữ nguyên RobotVision của ông (truyền path hoặc object tùy thuộc vào class đó hỗ trợ gì)
         self.vision = RobotVision(yolo_path, device=yolo_device)
         
         # --- 2. CNN MODEL INFO ---
@@ -100,16 +109,16 @@ class RoboconSystem:
         
         # --- 3. DISPLAY PARAMETERS ---
         print("\n" + "═"*50)
-        print(f"  [MODEL ANALYSIS] RBC2026")
+        print(f"  [MODEL ANALYSIS] RBC2026-V3")
         print(f"  - YOLO: {yolo_params/1e6:>6.2f}M params ({yolo_device})")
         print(f"  - CNN : {cnn_params/1e3:>6.2f}K params ({cnn_device})")
         print("" + "═"*50 + "\n")
 
         self.labels_cnn = {int(v): k for k, v in json.load(open(self.config.get_path("labels_json"))).items()}
+
     def _init_hardware(self):
         cam_id = self.config.get("hardware.camera.device_id", 0)
-        # Sửa src theo yêu cầu Camera của ông
-        self.camera = CameraStream(src=cam_id , buffer_size=1).start()
+        self.camera = CameraStream(src=cam_id, buffer_size=1).start()
         self.uart = UARTManager(port=self.config.get("hardware.uart.port", "COM10"), 
                                 baudrate=self.config.get("hardware.uart.baudrate", 115200))
 
@@ -118,8 +127,33 @@ class RoboconSystem:
         self.conf_yolo = self.config.get("models.yolo.conf_threshold", 0.6)
         self.conf_cnn = self.config.get("models.cnn.conf_threshold", 0.5)
 
+    def _inference_loop(self):
+        """Worker thread for background AI inference (YOLO + CNN)."""
+        imgsz = self.config.get("models.yolo.input_size", 512)
+        self.logger.info("Inference Thread (V3) started.")
+        
+        while self.inference_running and not self.camera.stopped:
+            frame = self.camera.read()
+            if frame is None:
+                time.sleep(0.01)
+                continue
+            
+            # 1. Chạy YOLO
+            detections = self.vision.predict(frame, conf_threshold=self.conf_yolo, imgsz=imgsz)
+            
+            # 2. Chạy CNN cho từng vật thể (Leftmost Priority)
+            if detections:
+                res = self._process_selective_leftmost(frame, detections)
+                if res[0]:
+                    with self.inference_lock:
+                        self.latest_inference_data = res
+            else:
+                with self.inference_lock:
+                    self.latest_inference_data = (None, "NONE")
+            
+            time.sleep(0.001)
+
     def _reset_kalman_at_pos(self, x: float, y: float):
-        """Mồi vị trí tức thì để tránh chấm tròn bay từ (0,0)."""
         self.vision._init_kalman_filter()
         self.vision.kalman.statePost = np.array([[x], [y], [0], [0]], dtype=np.float32)
         self.vision.kalman.statePre = np.array([[x], [y], [0], [0]], dtype=np.float32)
@@ -127,7 +161,6 @@ class RoboconSystem:
 
     def _process_selective_leftmost(self, frame, detections):
         h_f, w_f = frame.shape[:2]
-        # Ưu tiên vật thể bên trái nhất
         sorted_dets = sorted(detections, key=lambda d: (d.xyxy[0][0] + d.xyxy[0][2]) / 2)
 
         for det in sorted_dets:
@@ -142,7 +175,6 @@ class RoboconSystem:
             idx = np.argmax(res[0])
             label_raw = self.labels_cnn.get(idx, "UNK").upper()
             
-            # Chỉ nhận diện đúng Mode (R1, REAL, FAKE)
             if label_raw.startswith(self.target_mode) and res[0][idx] >= self.conf_cnn:
                 if self.last_target_x is None or abs(cx - self.last_target_x) > self.target_switch_threshold:
                     self._reset_kalman_at_pos(cx, cy)
@@ -162,91 +194,69 @@ class RoboconSystem:
                 
                 h_f, w_f = frame.shape[:2]
                 imgsz = self.config.get("models.yolo.input_size", 512)
-                
-                # --- PREPARE DISPLAY FRAME (LETTERBOX IF SQUARE) ---
                 force_square = self.config.get("display.force_square", True)
+
+                # ─── 1. TIẾP NHẬN DỮ LIỆU TỪ AI THREAD ───────────────
+                new_ai_pt = None
+                with self.inference_lock:
+                    if self.latest_inference_data:
+                        new_ai_pt, label = self.latest_inference_data
+                        self.latest_inference_data = None # Tiêu thụ kết quả
+                
+                # ─── 2. CẬP NHẬT KALMAN & TRẠNG THÁI (30 FPS) ──────────
+                if new_ai_pt:
+                    tx, ty = self.vision.update_kalman(new_ai_pt[0], new_ai_pt[1])
+                    self.latest_label = label
+                    self.loss_counter, self.status_text = 0, "LOCKED"
+                else:
+                    self.loss_counter += 1
+                    tx, ty = self.vision.update_kalman()
+                    
+                    if self.loss_counter >= self.max_loss_frames:
+                        self.status_text, self.latest_label, self.last_target_x = "LOST", "NONE", None
+                        tx, ty = (w_f // 2, h_f // 2)
+
+                # ─── 3. HIỂN THỊ & COORDINATE MAPPING ─────────────────
                 if force_square:
                     display_frame, display_scale, (pad_w, pad_h) = letterbox(frame, (imgsz, imgsz))
                     screen_center_x = imgsz // 2
+                    dtx = int(tx * display_scale + pad_w)
+                    dty = int(ty * display_scale + pad_h)
+                    self.latest_target_point = (dtx, dty)
                     curr_h, curr_w = imgsz, imgsz
                 else:
                     display_frame = frame
                     screen_center_x = w_f // 2
+                    self.latest_target_point = (tx, ty)
                     curr_h, curr_w = h_f, w_f
 
-                # --- AI LOGIC (SKIP-2) ---
-                if self.frame_idx % 3 == 0:
-                    detections = self.vision.predict(frame, conf_threshold=self.conf_yolo, imgsz=imgsz)
-                    found_curr = False
-                    if detections:
-                        new_pt, label = self._process_selective_leftmost(frame, detections)
-                        if new_pt:
-                            tx, ty = self.vision.update_kalman(new_pt[0], new_pt[1])
-                            
-                            # Convert to Display Coordinates if using Letterbox
-                            if force_square:
-                                dtx = int(tx * display_scale + pad_w)
-                                dty = int(ty * display_scale + pad_h)
-                                self.latest_target_point = (dtx, dty)
-                            else:
-                                self.latest_target_point = (tx, ty)
-                                
-                            self.latest_label = label
-                            self.loss_counter, self.status_text, found_curr = 0, "LOCKED", True
-                    
-                    if not found_curr:
-                        self.loss_counter += 1
-                        if self.loss_counter >= self.max_loss_frames:
-                            self.latest_target_point = (screen_center_x, curr_h // 2)
-                            self.status_text, self.latest_label, self.last_target_x = "LOST", "NONE", None
-                        else:
-                            tx, ty = self.vision.update_kalman()
-                            if force_square:
-                                self.latest_target_point = (int(tx * display_scale + pad_w), int(ty * display_scale + pad_h))
-                            else:
-                                self.latest_target_point = (tx, ty)
-                else:
-                    if self.loss_counter < self.max_loss_frames:
-                        tx, ty = self.vision.update_kalman()
-                        if force_square:
-                            self.latest_target_point = (int(tx * display_scale + pad_w), int(ty * display_scale + pad_h))
-                        else:
-                            self.latest_target_point = (tx, ty)
-
-                # --- CALCULATE ERROR X ---
-                if self.status_text != "LOCKED" or not self.latest_target_point:
+                # --- 4. TÍNH TOÁN SAI SỐ & UART (30 FPS) ---
+                if self.status_text != "LOCKED":
                     self.latest_error_x = 999
-                    self.uart.send_error(self.latest_error_x)
                 else:
                     self.latest_error_x = int(self.latest_target_point[0] - screen_center_x)
-                    self.uart.send_error(self.latest_error_x)
+                self.uart.send_error(self.latest_error_x)
 
-                # --- FPS & TERMINAL LOGGING ---
+                # --- 5. LOGGING & UI ---
                 self.frame_count_since_update += 1
                 curr_t = time.time()
                 if curr_t - self.last_fps_update_time >= 0.5:
                     self.display_fps = self.frame_count_since_update / (curr_t - self.last_fps_update_time)
-                    # LUÔN IN RA TERMINAL KHI CHẠY HEADLESS
                     if self.is_headless:
-                        # In Error X ra Terminal
-                        print(f"[RBC2026] FPS: {self.display_fps:.1f} | {self.status_text} | Target: {self.latest_label} | ErrX: {self.latest_error_x: >4}", end='\r')
-                    
+                        print(f"[RBC2026-V3] FPS: {self.display_fps:.1f} | {self.status_text} | Target: {self.latest_label} | ErrX: {self.latest_error_x: >4}", end='\r')
                     self.frame_count_since_update, self.last_fps_update_time = 0, curr_t
 
-                # --- DISPLAY (NON-HEADLESS ONLY) ---
                 if not self.is_headless:
                     cv2.rectangle(display_frame, (0, 0), (curr_w, 40), (40, 40, 40), -1)
-                    # Hiển thị thêm ErrX lên UI
-                    cv2.putText(display_frame, f"T:{self.target_mode} | {self.status_text} | {self.latest_label} | ErrX:{self.latest_error_x}", (10, 27), 0, 0.6, (255, 255, 255), 1)
+                    cv2.putText(display_frame, f"V3 | {self.status_text} | {self.latest_label} | ErrX:{self.latest_error_x}", (10, 27), 0, 0.6, (255, 255, 255), 1)
                     cv2.putText(display_frame, f"FPS: {self.display_fps:.1f}", (curr_w - 110, 27), 0, 0.6, (0, 255, 0), 2)
                     
-                    if self.latest_target_point:
-                        color = (0, 255, 0) if self.status_text == "LOCKED" else (0, 0, 255)
-                        cv2.circle(display_frame, self.latest_target_point, 10, color, -1)
-                        cv2.line(display_frame, (screen_center_x, curr_h), self.latest_target_point, color, 2)
-                        cv2.drawMarker(display_frame, (screen_center_x, curr_h // 2), (255, 255, 255), cv2.MARKER_CROSS, 20, 1)
+                    color = (0, 255, 0) if self.status_text == "LOCKED" else (0, 0, 255)
+                    cv2.circle(display_frame, self.latest_target_point, 10, color, -1)
+                    cv2.line(display_frame, (screen_center_x, curr_h), self.latest_target_point, color, 2)
+                    cv2.drawMarker(display_frame, (screen_center_x, curr_h // 2), (255, 255, 255), cv2.MARKER_CROSS, 20, 1)
                     
-                    cv2.imshow("RBC2026_PROD", display_frame)
+                    cv2.imshow("RBC2026_V3", display_frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'): break
 
                 self.frame_idx += 1
@@ -254,10 +264,12 @@ class RoboconSystem:
                 if elapsed < self.frame_duration:
                     time.sleep(self.frame_duration - elapsed)
         finally:
-            print("\nShutting down...")
+            print("\nShutting down V3 system...")
             self.cleanup()
 
     def cleanup(self):
+        self.inference_running = False
+        if hasattr(self, 'inf_thread'): self.inf_thread.join(timeout=1.0)
         self.camera.stop(); self.uart.stop(); cv2.destroyAllWindows()
         try: self.winmm.timeEndPeriod(1)
         except: pass
