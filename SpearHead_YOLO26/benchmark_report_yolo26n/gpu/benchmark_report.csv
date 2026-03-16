@@ -1,0 +1,31 @@
+Command line parameters
+-m;/home/du/Desktop/RBC2026/SpearHead_YOLO26/models/yolo26n_openvino_int8/best_int8.xml
+-d;GPU
+-api;sync
+-niter;100
+-report_type;detailed_counters
+-report_folder;/home/du/Desktop/RBC2026/SpearHead_YOLO26/benchmark_report_yolo26n/gpu
+
+Configuration setup
+topology;Model1
+target device;GPU
+API;sync
+inference_only;True
+precision;UNSPECIFIED
+batch size;1
+number of iterations;100
+number of parallel infer requests;1
+duration (ms);0
+
+Execution results
+read model time (ms);22.90
+compile model time (ms);1689.06
+first inference time (ms);20.77
+total execution time (ms);1402.26
+total number of iterations;100
+latency (ms);13.88
+avg latency;13.92
+min latency;11.67
+max latency;18.39
+throughput;71.31
+

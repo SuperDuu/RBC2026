@@ -31,9 +31,10 @@ logger = logging.getLogger(__name__)
 class ModelProfiler:
     """Profiles YOLO and CNN model performance."""
     
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = None, force_device: str = None):
         """Initialize profiler with models."""
         self.config = ConfigManager(config_path)
+        self.force_device = force_device
         self.ie = Core()
         self._init_models()
     
@@ -51,7 +52,7 @@ class ModelProfiler:
         # Load CNN model if available
         self.cnn_xml = self.config.get_path("paths.models.cnn_xml")
         if self.cnn_xml and Path(self.cnn_xml).exists():
-            cnn_device = self.config.get("models.cnn.device", "CPU")
+            cnn_device = self.force_device if self.force_device else self.config.get("models.cnn.device", "CPU")
             logger.info(f"Loading CNN model: {self.cnn_xml} on {cnn_device} (This might take a while to compile on GPU)...")
             start_load_cnn = time.time()
             cnn_model = self.ie.read_model(model=self.cnn_xml)
@@ -66,7 +67,7 @@ class ModelProfiler:
         # Load YOLO model
         self.yolo_xml = self.config.get_path("paths.models.yolo_xml")
         if self.yolo_xml and Path(self.yolo_xml).exists():
-            yolo_device = self.config.get("models.yolo.device", "CPU")
+            yolo_device = self.force_device if self.force_device else self.config.get("models.yolo.device", "CPU")
             yolo_class_id = self.config.get("models.yolo.class_id", 0)
             logger.info(f"Loading YOLO model: {self.yolo_xml} on {yolo_device} (This might take a while to compile on GPU)...")
             start_load = time.time()
@@ -77,7 +78,7 @@ class ModelProfiler:
             self.has_yolo = False
             logger.error(f"YOLO model not found at {self.yolo_xml}")
     
-    def profile_cnn(self, num_iterations: int = 100, warmup: int = 50) -> Optional[dict]:
+    def profile_cnn(self, num_iterations: int = 100, warmup: int = 20) -> Optional[dict]:
         """Profile CNN inference time."""
         if not self.has_cnn: return None
         
@@ -110,10 +111,18 @@ class ModelProfiler:
             'fps': 1000.0 / statistics.mean(times)
         }
         
-        logger.info(f"CNN Performance: {stats['trimmed_mean']:.3f} ms ({stats['fps']:.1f} FPS)")
+        logger.info("\nCNN Performance Results:")
+        logger.info(f"  Mean:          {stats['trimmed_mean']:.3f} ms")
+        logger.info(f"  Median:        {stats['median']:.3f} ms")
+        logger.info(f"  Min:           {stats['min']:.3f} ms")
+        logger.info(f"  Max:           {stats['max']:.3f} ms")
+        if 'std' in stats: logger.info(f"  Std Dev:       {stats['std']:.3f} ms")
+        if 'p95' in stats: logger.info(f"  P95:           {stats['p95']:.3f} ms")
+        if 'p99' in stats: logger.info(f"  P99:           {stats['p99']:.3f} ms")
+        logger.info(f"  FPS:           {stats['fps']:.1f}")
         return stats
     
-    def profile_yolo(self, frame: np.ndarray, num_iterations: int = 100, warmup: int = 50) -> Optional[dict]:
+    def profile_yolo(self, frame: np.ndarray, num_iterations: int = 100, warmup: int = 20) -> Optional[dict]:
         """Profile YOLO inference time."""
         if not self.has_yolo: return None
         
@@ -146,7 +155,16 @@ class ModelProfiler:
             'avg_detections': statistics.mean(num_detections)
         }
         
-        logger.info(f"YOLO Performance: {stats['trimmed_mean']:.3f} ms ({stats['fps']:.1f} FPS)")
+        logger.info("\nYOLO Performance Results:")
+        logger.info(f"  Mean:          {stats['trimmed_mean']:.3f} ms")
+        logger.info(f"  Median:        {stats['median']:.3f} ms")
+        logger.info(f"  Min:           {stats['min']:.3f} ms")
+        logger.info(f"  Max:           {stats['max']:.3f} ms")
+        if 'std' in stats: logger.info(f"  Std Dev:       {stats['std']:.3f} ms")
+        if 'p95' in stats: logger.info(f"  P95:           {stats['p95']:.3f} ms")
+        if 'p99' in stats: logger.info(f"  P99:           {stats['p99']:.3f} ms")
+        logger.info(f"  FPS:           {stats['fps']:.1f}")
+        logger.info(f"  Avg Detections: {stats.get('avg_detections', 0.0):.1f}")
         return stats
     
     def profile_full_pipeline(self, frame: np.ndarray, num_iterations: int = 50, warmup: int = 5) -> Optional[dict]:
@@ -165,25 +183,28 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", type=str, help="Path to test image")
     parser.add_argument("--config", type=str, help="Path to config YAML file")
-    parser.add_argument("--iterations", type=int, default=500)
-    parser.add_argument("--warmup", type=int, default=50)
+    parser.add_argument("--iterations", type=int, default=100)
+    parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--full", action="store_true")
     args = parser.parse_args()
     
     try:
         config_path = args.config if args.config else str(Path(__file__).resolve().parent / "config.yaml")
-        profiler = ModelProfiler(config_path=config_path)
+        for dev in ['CPU', 'GPU']:
+            logger.info(f"\n{'#'*70}\n### RUNNING ON DEVICE: {dev}\n{'#'*70}")
+            profiler = ModelProfiler(config_path=config_path, force_device=dev)
         
-        if profiler.has_cnn:
-            profiler.profile_cnn(num_iterations=args.iterations, warmup=args.warmup)
+            if profiler.has_cnn:
+                profiler.profile_cnn(num_iterations=args.iterations, warmup=args.warmup)
         
-        if profiler.has_yolo:
-            frame = cv2.imread(args.image) if args.image else np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-            profiler.profile_yolo(frame, num_iterations=args.iterations, warmup=args.warmup)
+            if profiler.has_yolo:
+                frame = cv2.imread(args.image) if args.image else np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+                profiler.profile_yolo(frame, num_iterations=args.iterations, warmup=args.warmup)
             
-            if args.full:
-                profiler.profile_full_pipeline(frame, num_iterations=args.iterations // 2)
+                if args.full:
+                    profiler.profile_full_pipeline(frame, num_iterations=args.iterations // 2)
                 
+        logger.info(f"\n{'='*60}\nAll Profiling completed!\n{'='*60}")
     except Exception as e:
         logger.error(f"Error during profiling: {e}", exc_info=True)
         return 1

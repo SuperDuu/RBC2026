@@ -30,9 +30,10 @@ logger = logging.getLogger(__name__)
 class ModelProfiler:
     """Profiles YOLO model performance."""
     
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = None, force_device: str = None):
         """Initialize profiler with models."""
         self.config = ConfigManager(config_path)
+        self.force_device = force_device
         self._init_models()
     
     def _init_models(self):
@@ -42,13 +43,13 @@ class ModelProfiler:
         
         # Load YOLO model
         yolo_xml = self.config.get_path("paths.models.yolo_xml")
-        yolo_device = self.config.get("models.yolo.device", "CPU")
+        yolo_device = self.force_device if self.force_device else self.config.get("models.yolo.device", "CPU")
         yolo_class_id = self.config.get("models.yolo.class_id", 0)
         logger.info(f"Loading YOLO model: {yolo_xml} on {yolo_device}")
         
         self.vision = RobotVision(yolo_xml, class_id=yolo_class_id, device=yolo_device)
 
-    def profile_yolo(self, frame: np.ndarray, num_iterations: int = 100, warmup: int = 50) -> dict:
+    def profile_yolo(self, frame: np.ndarray, num_iterations: int = 100, warmup: int = 20) -> dict:
         """Profile YOLO inference time."""
         logger.info(f"\n{'='*60}")
         logger.info("Profiling YOLO Model")
@@ -116,25 +117,27 @@ def main():
     parser = argparse.ArgumentParser(description="Profile YOLO model performance")
     parser.add_argument("--image", type=str, default=None, help="Path to test image")
     parser.add_argument("--config", type=str, default=None, help="Path to config YAML file")
-    parser.add_argument("--iterations", type=int, default=500, help="Number of iterations")
-    parser.add_argument("--warmup", type=int, default=50, help="Number of warmup iterations")
+    parser.add_argument("--iterations", type=int, default=100, help="Number of iterations")
+    parser.add_argument("--warmup", type=int, default=20, help="Number of warmup iterations")
     
     args = parser.parse_args()
     
     try:
         config_path = args.config if args.config else str(Path(__file__).resolve().parent / "config.yaml")
-        profiler = ModelProfiler(config_path=config_path)
+        for dev in ['CPU', 'GPU']:
+            logger.info(f"\n{'#'*70}\n### RUNNING ON DEVICE: {dev}\n{'#'*70}")
+            profiler = ModelProfiler(config_path=config_path, force_device=dev)
         
-        if args.image:
-            frame = cv2.imread(args.image)
-            if frame is None: raise ValueError(f"Failed to load image: {args.image}")
-        else:
-            frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-            logger.info("Using dummy frame (640x480)")
+            if args.image:
+                frame = cv2.imread(args.image)
+                if frame is None: raise ValueError(f"Failed to load image: {args.image}")
+            else:
+                frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+                logger.info("Using dummy frame (640x480)")
         
-        profiler.profile_yolo(frame=frame, num_iterations=args.iterations, warmup=args.warmup)
-        logger.info(f"\n{'='*60}\nProfiling completed!\n{'='*60}")
+            profiler.profile_yolo(frame=frame, num_iterations=args.iterations, warmup=args.warmup)
         
+        logger.info(f"\n{'='*60}\nAll Profiling completed!\n{'='*60}")
     except Exception as e:
         logger.error(f"Error during profiling: {e}", exc_info=True)
         return 1
