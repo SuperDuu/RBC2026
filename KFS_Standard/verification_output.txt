@@ -1,0 +1,25 @@
+2026-03-17 01:35:39,679 - INFO - Configuration loaded successfully from /home/du/Desktop/RBC2026/KFS_Standard/config.yaml
+2026-03-17 01:35:39,680 - INFO - Loading CNN model: /home/du/Desktop/RBC2026/KFS_Standard/models/openvino_cnn_v2_3/classifier_v2_3.xml on CPU
+2026-03-17 01:35:39,710 - INFO - Loading YOLO model: /home/du/Desktop/RBC2026/KFS_Standard/models/best_openvino_model_int8/best_int8.xml on GPU
+2026-03-17 01:35:40,462 - INFO - CNN Input shape: [1,64,64,1]
+2026-03-17 01:35:40,462 - INFO - CNN Output shape: [1,31]
+2026-03-17 01:35:40,463 - INFO - 
+============================================================
+2026-03-17 01:35:40,463 - INFO - Profiling CNN Model
+2026-03-17 01:35:40,463 - INFO - ============================================================
+2026-03-17 01:35:40,463 - INFO - Warming up (1 iterations)...
+2026-03-17 01:35:40,465 - INFO - Profiling (5 iterations)...
+2026-03-17 01:35:40,467 - INFO - 
+CNN Performance Results: Mean: 0.222 ms, FPS: 4514.3
+2026-03-17 01:35:40,468 - INFO - 
+============================================================
+2026-03-17 01:35:40,468 - INFO - Profiling YOLO Model
+2026-03-17 01:35:40,468 - INFO - ============================================================
+2026-03-17 01:35:40,543 - INFO - 
+YOLO Performance Results: Mean: 11.415 ms, FPS: 87.6
+2026-03-17 01:35:40,543 - INFO - 
+============================================================
+2026-03-17 01:35:40,543 - INFO - Profiling Full Pipeline (YOLO + CNN)
+2026-03-17 01:35:40,543 - INFO - ============================================================
+2026-03-17 01:35:40,615 - INFO - 
+Full Pipeline Results: Total Mean: 10.585 ms, FPS: 94.5

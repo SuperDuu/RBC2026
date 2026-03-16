@@ -58,54 +58,111 @@ class RobotVision:
         if frame is None: return []
         h_orig, w_orig = frame.shape[:2]
         canvas, scale, (pad_x, pad_y) = letterbox(frame, (imgsz, imgsz))
-        nw, nh = int(round(w_orig * scale)), int(round(h_orig * scale))
         input_data = canvas.transpose((2, 0, 1)).reshape((1, 3, imgsz, imgsz)).astype(np.float32) / 255.0
-        
+
         results = self.compiled_model([input_data])[self.output_layer]
-        predictions = np.squeeze(results)
-        if predictions.shape[0] < predictions.shape[1]: predictions = predictions.T
+        predictions = np.squeeze(results)  # [300,6] hoặc [5,5376]
+
+        # ─── Tự detect output format ───────────────────────────
+        # YOLO26n: [300, 6] → shape[1] == 6, đã NMS sẵn
+        # YOLOv8n: [5, 5376] → shape[0] < shape[1], raw anchors
+        is_yolo26_format = (predictions.ndim == 2 and 
+                            predictions.shape[1] == 6 and 
+                            predictions.shape[0] < 400)
+
+        if is_yolo26_format:
+            return self._postprocess_yolo26(predictions, conf_threshold, scale, pad_x, pad_y)
+        else:
+            return self._postprocess_yolov8(predictions, conf_threshold, scale, pad_x, pad_y)
+
+    def _postprocess_yolo26(self, predictions, conf_threshold, scale, pad_x, pad_y):
+        """YOLO26n: output [300, 6] = [x1, y1, x2, y2, conf, class_id] — vectorized"""
         
-        if len(predictions) > 0:
-            scores_all = predictions[:, 4:]
-            max_scores = np.max(scores_all, axis=1)
-            cls_ids = np.argmax(scores_all, axis=1)
-            valid_mask = (max_scores > conf_threshold) & (cls_ids == self.class_id)
-            valid_preds = predictions[valid_mask]
-            if len(valid_preds) > 0:
-                xc, yc, w, h = valid_preds[:, 0], valid_preds[:, 1], valid_preds[:, 2], valid_preds[:, 3]
-                x1 = ((xc - w/2 - pad_x) / scale).astype(np.int32)
-                y1 = ((yc - h/2 - pad_y) / scale).astype(np.int32)
-                raw_boxes = np.column_stack([x1, y1, (w / scale).astype(np.int32), (h / scale).astype(np.int32)]).tolist()
-                confidences = max_scores[valid_mask].tolist()
-                indices = cv2.dnn.NMSBoxes(raw_boxes, confidences, conf_threshold, DEFAULT_NMS_THRESHOLD)
-                
-                final_boxes, new_last_boxes = [], {}
-                if len(indices) > 0:
-                    for i in indices.flatten():
-                        rx, ry, rw, rh = raw_boxes[i]
-                        rx2, ry2 = rx + rw, ry + rh
-                        new_box = [rx, ry, rx2, ry2]
-                        best_iou, best_match_id = 0.0, None
-                        for prev_id, prev_box in self.last_boxes.items():
-                            xA, yA, xB, yB = max(new_box[0], prev_box[0]), max(new_box[1], prev_box[1]), min(new_box[2], prev_box[2]), min(new_box[3], prev_box[3])
-                            inter = max(0, xB - xA) * max(0, yB - yA)
-                            areaA, areaB = (rx2-rx)*(ry2-ry), (prev_box[2]-prev_box[0])*(prev_box[3]-prev_box[1])
-                            iou = inter / float(areaA + areaB - inter) if (areaA + areaB - inter) > 0 else 0
-                            if iou > best_iou: best_iou, best_match_id = iou, prev_id
-                        
-                        if best_iou > 0.3 and best_match_id:
-                            prev_box = self.last_boxes[best_match_id]
-                            fx1, fy1, fx2, fy2 = [int(self.alpha * c + (1-self.alpha) * p) for c, p in zip(new_box, prev_box)]
-                            new_box_id = best_match_id
-                        else:
-                            fx1, fy1, fx2, fy2 = rx, ry, rx2, ry2
-                            new_box_id = f"{rx}_{ry}_{time.time()}"
-                        
-                        new_last_boxes[new_box_id] = [fx1, fy1, fx2, fy2]
-                        final_boxes.append(DetectedObject(fx1, fy1, fx2, fy2, confidences[i]))
-                self.last_boxes = new_last_boxes
-                return final_boxes
-        return []
+        # Vectorized filter thay vì for loop
+        confs = predictions[:, 4]
+        cls_ids = predictions[:, 5].astype(np.int32)
+        valid_mask = (confs >= conf_threshold) & (cls_ids == self.class_id)
+        valid = predictions[valid_mask]
+        
+        if len(valid) == 0:
+            self.last_boxes = {}
+            return []
+        
+        # Unpad + unscale toàn bộ array cùng lúc
+        x1s = ((valid[:, 0] - pad_x) / scale).astype(np.int32)
+        y1s = ((valid[:, 1] - pad_y) / scale).astype(np.int32)
+        x2s = ((valid[:, 2] - pad_x) / scale).astype(np.int32)
+        y2s = ((valid[:, 3] - pad_y) / scale).astype(np.int32)
+        confs_valid = valid[:, 4]
+        
+        # Build results — EMA vẫn cần loop nhưng chỉ trên detected boxes thật
+        final_boxes, new_last_boxes = [], {}
+        for i in range(len(valid)):
+            new_box = [x1s[i], y1s[i], x2s[i], y2s[i]]
+            fx1, fy1, fx2, fy2, box_id = self._apply_ema(new_box)
+            new_last_boxes[box_id] = [fx1, fy1, fx2, fy2]
+            final_boxes.append(DetectedObject(fx1, fy1, fx2, fy2, float(confs_valid[i])))
+        
+        self.last_boxes = new_last_boxes
+        return final_boxes
+
+    def _postprocess_yolov8(self, predictions, conf_threshold, scale, pad_x, pad_y):
+        """YOLOv8n: output [5, 5376] = [xc, yc, w, h, class_score] — cần NMS"""
+        if predictions.shape[0] < predictions.shape[1]:
+            predictions = predictions.T  # → [5376, 5]
+
+        scores_all = predictions[:, 4:]
+        max_scores = np.max(scores_all, axis=1)
+        cls_ids = np.argmax(scores_all, axis=1)
+        valid_mask = (max_scores > conf_threshold) & (cls_ids == self.class_id)
+        valid_preds = predictions[valid_mask]
+
+        if len(valid_preds) == 0:
+            self.last_boxes = {}
+            return []
+
+        xc, yc, w, h = valid_preds[:,0], valid_preds[:,1], valid_preds[:,2], valid_preds[:,3]
+        x1 = ((xc - w/2 - pad_x) / scale).astype(np.int32)
+        y1 = ((yc - h/2 - pad_y) / scale).astype(np.int32)
+        raw_boxes = np.column_stack([x1, y1, (w/scale).astype(np.int32), (h/scale).astype(np.int32)]).tolist()
+        confidences = max_scores[valid_mask].tolist()
+        indices = cv2.dnn.NMSBoxes(raw_boxes, confidences, conf_threshold, DEFAULT_NMS_THRESHOLD)
+
+        final_boxes, new_last_boxes = [], {}
+        if len(indices) > 0:
+            for i in indices.flatten():
+                rx, ry, rw, rh = raw_boxes[i]
+                new_box = [rx, ry, rx + rw, ry + rh]
+                fx1, fy1, fx2, fy2, box_id = self._apply_ema(new_box)
+                new_last_boxes[box_id] = [fx1, fy1, fx2, fy2]
+                final_boxes.append(DetectedObject(fx1, fy1, fx2, fy2, confidences[i]))
+
+        self.last_boxes = new_last_boxes
+        return final_boxes
+
+    def _apply_ema(self, new_box):
+        """EMA smoothing — dùng chung cho cả 2 format"""
+        best_iou, best_match_id = 0.0, None
+        rx1, ry1, rx2, ry2 = new_box
+        for prev_id, prev_box in self.last_boxes.items():
+            xA = max(rx1, prev_box[0]); yA = max(ry1, prev_box[1])
+            xB = min(rx2, prev_box[2]); yB = min(ry2, prev_box[3])
+            inter = max(0, xB-xA) * max(0, yB-yA)
+            areaA = (rx2-rx1) * (ry2-ry1)
+            areaB = (prev_box[2]-prev_box[0]) * (prev_box[3]-prev_box[1])
+            iou = inter / float(areaA + areaB - inter) if (areaA + areaB - inter) > 0 else 0
+            if iou > best_iou:
+                best_iou, best_match_id = iou, prev_id
+
+        if best_iou > 0.3 and best_match_id:
+            prev_box = self.last_boxes[best_match_id]
+            fx1, fy1, fx2, fy2 = [int(self.alpha*c + (1-self.alpha)*p) for c, p in zip(new_box, prev_box)]
+            box_id = best_match_id
+        else:
+            fx1, fy1, fx2, fy2 = new_box
+            box_id = f"{rx1}_{ry1}_{time.time()}"
+
+        return fx1, fy1, fx2, fy2, box_id
 
     def update_kalman(self, x: Optional[float] = None, y: Optional[float] = None) -> Tuple[int, int]:
         try:

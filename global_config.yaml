@@ -29,7 +29,7 @@ v1_model:
   nms_threshold: 0.5
   target_name: "Target"
   # Preprocessing
-  use_clahe: false
+  use_clahe: true
   clip_limit: 1.5
   mean: [0.0, 0.0, 0.0]  # Standard YOLOv8 (0..255)
   std: [255.0, 255.0, 255.0]
@@ -48,7 +48,7 @@ v2_model:
   background_value: 128
   target_types: ["REAL", "R1"]
   # Preprocessing
-  use_clahe: false
+  use_clahe: true
   clip_limit: 1.2
   mean: [0.0, 0.0, 0.0] # Standard grayscale (0..255)
   std: [255.0, 255.0, 255.0]
