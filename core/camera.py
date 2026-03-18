@@ -19,16 +19,20 @@ class CameraStream:
     Uses separate thread to continuously read frames, reducing latency.
     """
     
-    def __init__(self, src: int = 0, buffer_size: int = 1):
+    def __init__(self, src: int = 0, buffer_size: int = 1, width: Optional[int] = None, height: Optional[int] = None):
         """
         Initialize camera stream.
         
         Args:
             src: Camera device ID (default: 0)
             buffer_size: Buffer size for VideoCapture (default: 1 for low latency)
+            width: Desired camera capture width
+            height: Desired camera capture height
         """
         self.src = src
         self.buffer_size = buffer_size
+        self.width = width
+        self.height = height
         self.logger = logging.getLogger(f"{__name__}.CameraStream")
         
         self.cap: Optional[cv2.VideoCapture] = None
@@ -48,6 +52,12 @@ class CameraStream:
             
             # Set buffer size for low latency
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
+            
+            # Set resolution if provided
+            if self.width:
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            if self.height:
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
             
             # Read initial frame
             success, self.frame = self.cap.read()

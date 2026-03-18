@@ -16,6 +16,8 @@ detection:
 hardware:
   camera:
     device_id: 0
+    width: 640
+    height: 480
   serial:
     port: "COM10"
     baudrate: 115200

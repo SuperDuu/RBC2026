@@ -35,8 +35,12 @@ class SystemManager:
         self.target_fps = self.config['system']['target_fps']
         self.frame_duration = 1.0 / self.target_fps
         
-        # OpenVINO Shared Core
+        # OpenVINO Shared Core with Model Caching
         self.ie = Core()
+        # Create cache directory if it doesn't exist
+        cache_dir = Path("models_cache")
+        cache_dir.mkdir(exist_ok=True)
+        self.ie.set_property({'CACHE_DIR': str(cache_dir)})
         
         # Async Inference State
         self.inference_lock = threading.Lock()
@@ -74,8 +78,11 @@ class SystemManager:
                 print(f"TEST IMAGE LOADED: {abs_img_path} {self.test_frame.shape}", flush=True)
         
         if not self.use_test_image:
-            cam_id = self.config['hardware']['camera']['device_id']
-            self.camera = CameraStream(src=cam_id).start()
+            cam_cfg = self.config['hardware']['camera']
+            cam_id = cam_cfg['device_id']
+            cam_w = cam_cfg.get('width', 640)
+            cam_h = cam_cfg.get('height', 480)
+            self.camera = CameraStream(src=cam_id, width=cam_w, height=cam_h).start()
         else:
             self.camera = None
         
@@ -90,7 +97,7 @@ class SystemManager:
 
     def _init_models(self):
         print("\n" + "═"*50, flush=True)
-        print(f"  [SYSTEM MANAGER] LOADING DUAL MODELS", flush=True)
+        print(f"  [SYSTEM MANAGER] LOADING ALL MODELS UPFRONT", flush=True)
         
         # Model V1 (SpearHead)
         v1_cfg = self.config['v1_model']
@@ -114,11 +121,10 @@ class SystemManager:
         v2_labels = v2_cfg['labels_json']
         with open(v2_labels, 'r') as f:
             self.v2_labels = {int(v): k for k, v in json.load(f).items()}
-            
         print(f"  - Model V2 Load (KFS): SUCCESS", flush=True)
-        print("" + "═"*50 + "\n", flush=True)
-            
+        
         self.v2_smoother = LabelSmoother(window_size=7)
+        print("" + "═"*50 + "\n", flush=True)
 
     def _inference_loop(self):
         """Background thread for continuous AI processing."""
@@ -137,7 +143,7 @@ class SystemManager:
             res = (None, "NONE")
             all_dets = [] # For test mode visualization: List of (box, label, score)
             
-            if self.state == 1: # V1 SpearHead
+            if self.state == 1 and self.v1_vision: # V1 SpearHead
                 dets = self.v1_vision.predict(frame, conf_threshold=self.config['v1_model']['conf_threshold'])
                 if dets:
                     # Target selection: Leftmost
@@ -150,7 +156,7 @@ class SystemManager:
                             x1, y1, x2, y2 = map(int, d.xyxy[0])
                             all_dets.append(([x1, y1, x2, y2], "YOLO", d.conf))
                 
-            elif self.state == 2: # V2 KFS
+            elif self.state == 2 and self.v2_vision: # V2 KFS
                 dets = self.v2_vision.predict(frame, conf_threshold=self.config['v2_model']['conf_threshold_yolo'])
                 if dets:
                     sorted_dets = sorted(dets, key=lambda d: (d.xyxy[0][0] + d.xyxy[0][2]) / 2) # Leftmost first
@@ -183,7 +189,8 @@ class SystemManager:
 
             with self.inference_lock:
                 self.latest_inference_data = (res, all_dets)
-            time.sleep(0.001)
+            # Sleep slightly to prevent this thread from starving the UI/Camera threads on weak CPUs
+            time.sleep(0.01)
 
     def run(self):
         print(f"--- RUN LOOP START | HEADLESS: {self.headless} ---", flush=True)
@@ -194,7 +201,9 @@ class SystemManager:
         self.loss_counter = 0
         self.max_loss_frames = self.config['detection']['max_loss_frames']
         self.current_label = "NONE"
+        self.current_status = "SEARCHING"
         self.inference_skip = self.config['system'].get('inference_skip', 1)
+        self.all_dets = []
 
         try:
             while self.inference_running:
@@ -211,36 +220,48 @@ class SystemManager:
                 h_orig, w_orig = frame.shape[:2]
 
                 # Consume latest AI results
-                new_pt, a_label = (None, "NONE")
-                all_dets = []
+                has_new_inference = False
+                new_pt, a_label = None, "NONE"
                 with self.inference_lock:
                     if self.latest_inference_data:
-                        (new_pt, a_label), all_dets = self.latest_inference_data
+                        (new_pt, a_label), self.all_dets = self.latest_inference_data
                         self.latest_inference_data = None
+                        has_new_inference = True
                 
                 # Kalman Tracking & Smoothing
-                current_vision = self.v1_vision if self.state == 1 else self.v2_vision
-                if new_pt:
-                    tx, ty = current_vision.update_kalman(new_pt[0], new_pt[1])
-                    self.current_status = "LOCKED"
-                    if a_label != "NONE":
-                        self.current_label = a_label
-                    self.loss_counter = 0
-                else:
-                    self.loss_counter += 1
-                    tx, ty = current_vision.update_kalman()
-                    
-                    # Status Hysteresis: Stay LOCKED if we just missed a few frames (inference_skip)
-                    if self.loss_counter <= self.inference_skip:
+                current_vision = None
+                if self.state == 1:
+                    current_vision = self.v1_vision
+                elif self.state == 2:
+                    current_vision = self.v2_vision
+                
+                if current_vision and has_new_inference:
+                    if new_pt:
+                        tx, ty = current_vision.update_kalman(new_pt[0], new_pt[1])
                         self.current_status = "LOCKED"
-                    elif self.loss_counter < self.max_loss_frames:
-                        self.current_status = "SEARCHING"
+                        if a_label != "NONE":
+                            self.current_label = a_label
+                        self.loss_counter = 0
                     else:
-                        self.current_status = "LOST"
+                        self.loss_counter += 1
+                        tx, ty = current_vision.update_kalman()
+                elif current_vision:
+                    # AI is still processing, predict next position but DO NOT increment loss_counter
+                    tx, ty = current_vision.update_kalman()
+                else:
+                    tx, ty = w_orig // 2, h_orig // 2
                     
-                    if self.current_status == "LOST":
-                        self.current_label = "NONE"
-                        tx, ty = w_orig // 2, h_orig // 2
+                # Status Hysteresis (Stay LOCKED if we just missed a few AI frames)
+                if self.loss_counter <= self.inference_skip:
+                    self.current_status = "LOCKED"
+                elif self.loss_counter < self.max_loss_frames:
+                    self.current_status = "SEARCHING"
+                else:
+                    self.current_status = "LOST"
+                
+                if self.current_status == "LOST":
+                    self.current_label = "NONE"
+                    tx, ty = w_orig // 2, h_orig // 2
                 
                 status = self.current_status
                 label = self.current_label
@@ -293,8 +314,8 @@ class SystemManager:
                     color = (0, 255, 0) if status in ["LOCKED", "SEARCHING"] else (0, 0, 255)
                     
                     # Draw All Boxes in Test Mode
-                    if self.use_test_image and all_dets:
-                        for box, b_label, b_score in all_dets:
+                    if self.use_test_image and self.all_dets:
+                        for box, b_label, b_score in self.all_dets:
                             # Map box to display coords
                             bx1, by1, bx2, by2 = box
                             dbx1, dby1 = int(bx1 * scale + pw), int(by1 * scale + ph)

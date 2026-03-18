@@ -20,7 +20,7 @@ DEFAULT_INPUT_SIZE = 512
 DEFAULT_CONF_THRESHOLD = 0.5
 DEFAULT_NMS_THRESHOLD = 0.45
 BACKGROUND_VALUE = 128
-KALMAN_PROCESS_NOISE = 0.03
+KALMAN_PROCESS_NOISE = 0.1
 
 class DetectedObject:
     def __init__(self, x1: int, y1: int, x2: int, y2: int, conf: float):
