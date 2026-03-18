@@ -128,6 +128,10 @@ class SystemManager:
 
     def _inference_loop(self):
         """Background thread for continuous AI processing."""
+        inf_last_t = time.time()
+        inf_frames = 0
+        self.inference_fps = 0.0
+        
         while self.inference_running:
             if self.use_test_image:
                 frame = self.test_frame.copy()
@@ -189,6 +193,13 @@ class SystemManager:
 
             with self.inference_lock:
                 self.latest_inference_data = (res, all_dets)
+            
+            inf_frames += 1
+            curr_t = time.time()
+            if curr_t - inf_last_t >= 0.5:
+                self.inference_fps = inf_frames / (curr_t - inf_last_t)
+                inf_frames, inf_last_t = 0, curr_t
+                
             # Sleep slightly to prevent this thread from starving the UI/Camera threads on weak CPUs
             time.sleep(0.01)
 
@@ -331,7 +342,8 @@ class SystemManager:
                     # Status Header
                     cv2.rectangle(df, (0, 0), (curr_w, 35), (40, 40, 40), -1)
                     cv2.putText(df, f"MODE:{self.state} | {status} | {label} | EX:{err_x}", (10, 25), 0, 0.6, (255, 255, 255), 1)
-                    cv2.putText(df, f"FPS: {self.display_fps:.1f}", (curr_w - 100, 25), 0, 0.6, (0, 255, 0), 2)
+                    fps_txt = f"SYS:{self.display_fps:.1f} | AI:{getattr(self, 'inference_fps', 0):.1f}"
+                    cv2.putText(df, fps_txt, (10, 55), 0, 0.6, (200, 200, 200), 2)
                     
                     cv2.imshow("SystemManager", df)
                     key = cv2.waitKey(1) & 0xFF
