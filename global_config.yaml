@@ -24,7 +24,7 @@ hardware:
 
 v1_model:
   name: "SpearHead"
-  yolo_xml: "SpearHead_Standard/models/best_openvino_model_int8/best_int8.xml"
+  yolo_xml: "SpearHead_YOLO26/models/yolo26n_openvino_fp16/best.xml"
   device: "GPU"
   input_size: 512
   conf_threshold: 0.7
@@ -38,7 +38,7 @@ v1_model:
  
 v2_model:
   name: "KFS"
-  yolo_xml: "KFS_Standard/models/best_openvino_model_int8/best_int8.xml"
+  yolo_xml: "KFS_YOLO26/models/yolo26n_openvino_fp16/best.xml"
   yolo_device: "GPU"
   cnn_xml: "KFS_Standard/models/openvino_cnn_v2_3/classifier_v2_3.xml"
   cnn_device: "CPU"
